@@ -1,0 +1,16 @@
+---
+Language: Cpp
+BasedOnStyle: Chromium
+Standard: c++20
+ColumnLimit: 96
+DerivePointerAlignment: false
+PointerAlignment: Left
+IncludeBlocks: Preserve
+AllowShortFunctionsOnASingleLine: Inline
+---
+Language: ObjC
+BasedOnStyle: Chromium
+ColumnLimit: 96
+ObjCBlockIndentWidth: 2
+ObjCSpaceAfterProperty: false
+ObjCSpaceBeforeProtocolList: true

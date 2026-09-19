@@ -1,0 +1,29 @@
+# Build output
+build/
+out/
+install/
+CMakeUserPresets.json
+
+# vcpkg
+vcpkg_installed/
+
+# CEF binary distribution (provisioned by cmake/DownloadCEF.cmake)
+third_party/cef/
+
+# Web UI (arrives in week 2)
+ui/node_modules/
+ui/dist/
+
+# Editors and tooling
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.cache/
+compile_commands.json
+
+# OS noise
+Thumbs.db
+desktop.ini
+.DS_Store
