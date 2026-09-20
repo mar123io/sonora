@@ -1,0 +1,73 @@
+:root {
+  color-scheme: dark;
+  --bg: #121212;
+  --fg: #e6e6e6;
+  --muted: #9aa0a6;
+  --ok: #7ee787;
+  --bad: #ff7b72;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* The window is the chrome; the page must never scroll the whole app. */
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
+  padding: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+h1 {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  margin: 0 0 32px;
+  color: var(--muted);
+}
+
+#diagnostics {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+#diagnostics dt {
+  color: var(--muted);
+}
+
+#diagnostics dd {
+  margin: 0;
+}
+
+#diagnostics dd[data-state='ok'] {
+  color: var(--ok);
+}
+
+#diagnostics dd[data-state='bad'] {
+  color: var(--bad);
+}

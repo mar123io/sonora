@@ -13,24 +13,32 @@ target_link_libraries(sonora_platform PUBLIC sonora::core)
 if(WIN32)
   target_sources(sonora_platform PRIVATE
     win/window_win32.cpp
-    win/event_loop_win32.cpp)
+    win/event_loop_win32.cpp
+    win/child_window_win32.cpp
+    win/paths_win32.cpp
+    win/entry_win32.cpp)
   # dwmapi: dark title bar. shcore is not needed, per-monitor v2 awareness comes
   # from the application manifest (see src/shell/sonora.manifest).
   target_link_libraries(sonora_platform PRIVATE dwmapi)
 
 elseif(APPLE)
-  target_sources(sonora_platform PRIVATE
+  set(sonora_platform_mac_sources
     mac/window_mac.mm
-    mac/event_loop_mac.mm)
-  set_source_files_properties(mac/window_mac.mm mac/event_loop_mac.mm
+    mac/event_loop_mac.mm
+    mac/child_window_mac.mm
+    mac/paths_mac.mm)
+  target_sources(sonora_platform PRIVATE ${sonora_platform_mac_sources})
+  set_source_files_properties(${sonora_platform_mac_sources}
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_link_libraries(sonora_platform PRIVATE "-framework Cocoa")
 
 else()
-  # Linux is not a supported target yet. The stub keeps the tree building on
-  # Linux CI and makes the missing backend a runtime error with a clear
-  # message instead of a link error nobody can read.
+  # Linux is not a supported target yet. The stubs keep the tree building on
+  # Linux CI and make the missing backend a runtime error with a clear message
+  # instead of a link error nobody can read.
   target_sources(sonora_platform PRIVATE
     linux/window_stub.cpp
-    linux/event_loop_stub.cpp)
+    linux/event_loop_stub.cpp
+    linux/child_window_stub.cpp
+    linux/paths_stub.cpp)
 endif()

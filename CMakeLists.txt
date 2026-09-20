@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(Sonora
-  VERSION 0.1.0
+  VERSION 0.2.0
   DESCRIPTION "Native C++ desktop shell hosting a web UI"
   LANGUAGES CXX)
 
@@ -15,9 +15,12 @@ endif()
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
-option(SONORA_BUILD_SHELL "Build the sonora executable (needs a platform window layer)" ON)
+# Building the shell implies CEF: from week 2 the executable is a CEF host and
+# there is no meaningful build of it without one. The macOS and Linux CI jobs
+# turn this off and check only the portable targets, which is what keeps the
+# platform abstraction honest without downloading a gigabyte per run.
+option(SONORA_BUILD_SHELL "Build the Sonora executable (requires CEF)" ON)
 option(SONORA_BUILD_TESTS "Build unit tests" ON)
-option(SONORA_ENABLE_CEF  "Download and link the Chromium Embedded Framework" OFF)
 
 # ---------------------------------------------------------------------------
 # Global settings

@@ -1,8 +1,14 @@
+#include <sonora/platform/app_main.h>
 #include <sonora/platform/event_loop.h>
 
 #import <Cocoa/Cocoa.h>
 
+#include <utility>
+
 namespace sonora::platform {
+namespace {
+WorkCallback g_work_callback;
+}  // namespace
 
 int RunEventLoop() {
   @autoreleasepool {
@@ -29,4 +35,31 @@ void RequestQuit(int exit_code) {
   [NSApp postEvent:wake atStart:YES];
 }
 
+void SetWorkCallback(WorkCallback callback) {
+  g_work_callback = std::move(callback);
+}
+
+void ScheduleWork(int64_t delay_ms) {
+  if (!g_work_callback) {
+    return;
+  }
+  // dispatch_after on the main queue is the AppKit equivalent of the Win32
+  // message-only window: it runs the block from inside the existing run loop.
+  const dispatch_time_t when =
+      dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(delay_ms) * NSEC_PER_MSEC);
+  dispatch_after(when, dispatch_get_main_queue(), ^{
+    if (g_work_callback) {
+      g_work_callback();
+    }
+  });
+}
+
+void* NativeInstanceHandle() noexcept {
+  return nullptr;
+}
+
 }  // namespace sonora::platform
+
+int main() {
+  return sonora::platform::AppMain();
+}

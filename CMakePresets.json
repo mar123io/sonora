@@ -1,6 +1,10 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -17,7 +21,11 @@
       "hidden": true,
       "inherits": "base",
       "description": "No generator is pinned on purpose: CMake picks the newest Visual Studio installed, so the presets do not break when the toolchain is upgraded. Override with the CMAKE_GENERATOR environment variable (e.g. Ninja from a Developer Command Prompt). Both CMAKE_BUILD_TYPE and CMAKE_CONFIGURATION_TYPES are set so either kind of generator behaves.",
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
       "cacheVariables": {
         "SONORA_BUILD_SHELL": "ON"
       }
@@ -45,7 +53,11 @@
       "displayName": "macOS Release (compile-only check, arm64)",
       "inherits": "base",
       "generator": "Ninja",
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_OSX_DEPLOYMENT_TARGET": "12.0",
@@ -54,44 +66,70 @@
     },
     {
       "name": "linux-debug",
-      "displayName": "Linux x64 Debug (core portability check)",
+      "displayName": "Linux x64 Debug (portable targets only)",
       "inherits": "base",
       "generator": "Unix Makefiles",
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "SONORA_BUILD_SHELL": "ON"
+        "SONORA_BUILD_SHELL": "OFF"
       }
     }
   ],
   "buildPresets": [
-    { "name": "win-debug", "configurePreset": "win-debug", "configuration": "Debug" },
-    { "name": "win-release", "configurePreset": "win-release", "configuration": "Release" },
-    { "name": "mac-release", "configurePreset": "mac-release" },
-    { "name": "linux-debug", "configurePreset": "linux-debug" }
+    {
+      "name": "win-debug",
+      "configurePreset": "win-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "win-release",
+      "configurePreset": "win-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "mac-release",
+      "configurePreset": "mac-release"
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug"
+    }
   ],
   "testPresets": [
     {
       "name": "win-debug",
       "configurePreset": "win-debug",
       "configuration": "Debug",
-      "output": { "outputOnFailure": true }
+      "output": {
+        "outputOnFailure": true
+      }
     },
     {
       "name": "win-release",
       "configurePreset": "win-release",
       "configuration": "Release",
-      "output": { "outputOnFailure": true }
+      "output": {
+        "outputOnFailure": true
+      }
     },
     {
       "name": "mac-release",
       "configurePreset": "mac-release",
-      "output": { "outputOnFailure": true }
+      "output": {
+        "outputOnFailure": true
+      }
     },
     {
       "name": "linux-debug",
       "configurePreset": "linux-debug",
-      "output": { "outputOnFailure": true }
+      "output": {
+        "outputOnFailure": true
+      }
     }
   ]
 }
