@@ -64,6 +64,10 @@ h1 {
   margin: 0;
 }
 
+#diagnostics dd[data-state='pending'] {
+  color: var(--muted);
+}
+
 #diagnostics dd[data-state='ok'] {
   color: var(--ok);
 }

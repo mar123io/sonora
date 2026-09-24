@@ -3,17 +3,22 @@
 #include <sonora/platform/app_main.h>
 #include <sonora/platform/event_loop.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "cef/app.h"
 #include "cef/client.h"
+#include "cef/handlers.h"
 #include "include/cef_app.h"
 
 namespace sonora::shell {
 namespace {
 
 CefRefPtr<SonoraApp> g_app;
+// Owned here so it outlives the client that borrows it, and dies only
+// after CefShutdown has torn down anything that could still call it.
+std::unique_ptr<ShellHandlers> g_handlers;
 bool g_initialized = false;
 
 std::string Utf8(const std::filesystem::path& path) {
@@ -87,6 +92,9 @@ bool StartCef(const RuntimeConfig& config) {
   options.enable_devtools = config.enable_devtools;
   options.asset_store = config.asset_store;
 
+  g_handlers = std::make_unique<ShellHandlers>();
+  options.bridge_handlers = g_handlers.get();
+
   g_app = new SonoraApp(std::move(options));
 
   // Registered before CefInitialize: CEF can ask for work during
@@ -98,6 +106,7 @@ bool StartCef(const RuntimeConfig& config) {
 
   if (!CefInitialize(MakeMainArgs(), settings, g_app, nullptr)) {
     g_app = nullptr;
+    g_handlers.reset();
     return false;
   }
   g_initialized = true;
@@ -115,6 +124,7 @@ void StopCef() {
   platform::SetWorkCallback(nullptr);
   g_app = nullptr;
   CefShutdown();
+  g_handlers.reset();
   g_initialized = false;
 }
 

@@ -1,83 +1,95 @@
 import './style.css';
 
-// Week 2 has no bridge yet, so this page can only report what the browser
-// itself knows. Every line here is a check on something the shell is supposed
-// to have set up: the custom scheme, its origin, and whether Chromium decided
-// the origin is trustworthy.
-//
-// Week 3 replaces this with the first real bridge call.
+import { BridgeError, sonora } from './bridge/invoke';
 
-interface Diagnostic {
+// Week 3 replaces the browser-only diagnostics with the first real traffic over
+// the bridge. Each row is a call that either proves something works or shows
+// exactly how it failed -- including, deliberately, one call that must fail.
+
+interface Row {
   readonly label: string;
   readonly value: string;
-  readonly ok: boolean;
+  readonly state: 'ok' | 'bad' | 'pending';
 }
 
-function collect(): Diagnostic[] {
-  const url = new URL(window.location.href);
+const rows = new Map<string, Row>();
 
-  return [
-    {
-      label: 'Origin',
-      value: window.location.origin,
-      ok: window.location.origin === 'sonora://app',
-    },
-    {
-      label: 'Scheme',
-      value: url.protocol.replace(':', ''),
-      ok: url.protocol === 'sonora:',
-    },
-    {
-      label: 'Secure context',
-      value: String(window.isSecureContext),
-      // CEF_SCHEME_OPTION_SECURE is what makes this true. If it is false the
-      // scheme was registered without it, and most modern web APIs will refuse
-      // to run later on.
-      ok: window.isSecureContext,
-    },
-    {
-      label: 'Storage',
-      value: storageAvailable() ? 'available' : 'unavailable',
-      // Requires CEF_SCHEME_OPTION_STANDARD: a non-standard scheme has an
-      // opaque origin and no storage.
-      ok: storageAvailable(),
-    },
-    {
-      label: 'Device pixel ratio',
-      value: String(window.devicePixelRatio),
-      ok: true,
-    },
-  ];
+function set(label: string, value: string, state: Row['state']): void {
+  rows.set(label, { label, value, state });
+  render();
 }
 
-function storageAvailable(): boolean {
-  try {
-    const probe = '__sonora__';
-    window.localStorage.setItem(probe, probe);
-    window.localStorage.removeItem(probe);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function render(diagnostics: Diagnostic[]): void {
+function render(): void {
   const list = document.querySelector<HTMLDListElement>('#diagnostics');
   if (list === null) {
     return;
   }
   list.replaceChildren(
-    ...diagnostics.flatMap((entry) => {
+    ...[...rows.values()].flatMap((row) => {
       const term = document.createElement('dt');
-      term.textContent = entry.label;
+      term.textContent = row.label;
 
       const value = document.createElement('dd');
-      value.textContent = entry.value;
-      value.dataset['state'] = entry.ok ? 'ok' : 'bad';
+      value.textContent = row.value;
+      value.dataset['state'] = row.state;
 
       return [term, value];
     }),
   );
 }
 
-render(collect());
+function describe(error: unknown): string {
+  if (error instanceof BridgeError) {
+    return `${error.message} (code ${error.code})`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function main(): Promise<void> {
+  for (const label of ['Shell', 'Chromium', 'Capabilities', 'Round trip', 'Rejected call']) {
+    set(label, 'calling...', 'pending');
+  }
+
+  try {
+    const version = await sonora.shell.getVersion();
+    set('Shell', `${version.version} (${version.gitDescribe})`, 'ok');
+    set('Chromium', `${version.chromiumVersion} via CEF ${version.cefVersion}`, 'ok');
+  } catch (error) {
+    set('Shell', describe(error), 'bad');
+    set('Chromium', 'unavailable', 'bad');
+  }
+
+  try {
+    const capabilities = await sonora.shell.listCapabilities();
+    const listed = capabilities.names.map(
+      (name, index) => `${name}@${capabilities.versions[index]}`,
+    );
+    set('Capabilities', listed.join(', '), 'ok');
+  } catch (error) {
+    set('Capabilities', describe(error), 'bad');
+  }
+
+  try {
+    const echoed = await sonora.shell.echo({ message: 'sonora', repeat: 2 });
+    const expected = 'sonorasonora';
+    const matches = echoed.message === expected && echoed.lengthBytes === expected.length;
+    set('Round trip', matches ? `${echoed.message} (${echoed.lengthBytes} bytes)` : 'mismatch',
+        matches ? 'ok' : 'bad');
+  } catch (error) {
+    set('Round trip', describe(error), 'bad');
+  }
+
+  try {
+    // This one is SUPPOSED to fail. A bridge that only proves the happy path
+    // has not proved that errors survive the crossing with their meaning
+    // intact, and that is the half that matters when something breaks later.
+    await sonora.shell.echo({ message: '' });
+    set('Rejected call', 'the shell accepted an empty message', 'bad');
+  } catch (error) {
+    const expected = error instanceof BridgeError && error.code === 3;
+    set('Rejected call', expected ? `rejected: ${error.message}` : describe(error),
+        expected ? 'ok' : 'bad');
+  }
+}
+
+void main();

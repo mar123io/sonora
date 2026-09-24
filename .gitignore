@@ -13,6 +13,8 @@ third_party/cef/
 # Web UI (arrives in week 2)
 ui/node_modules/
 ui/dist/
+# Generated from schema/bridge.schema.json by tools/gen_bridge.py
+ui/src/bridge/generated.ts
 
 # Editors and tooling
 .vs/

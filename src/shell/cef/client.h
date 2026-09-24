@@ -1,8 +1,16 @@
 #pragma once
 
+#include <memory>
+
 #include "include/cef_client.h"
 
+namespace sonora::bridge {
+class BridgeHandlers;
+}  // namespace sonora::bridge
+
 namespace sonora::shell {
+
+class BridgeRouter;
 
 // The browser-side handler set. One object implements every handler CEF asks
 // for; CefClient is a collection of factories rather than a base class with
@@ -10,13 +18,17 @@ namespace sonora::shell {
 class SonoraClient final : public CefClient,
                            public CefLifeSpanHandler,
                            public CefLoadHandler,
-                           public CefKeyboardHandler {
+                           public CefKeyboardHandler,
+                           public CefRequestHandler {
  public:
   struct Options {
     bool enable_devtools = false;
+    // Must outlive the client. Owned by the runtime.
+    bridge::BridgeHandlers* handlers = nullptr;
   };
 
   explicit SonoraClient(Options options);
+  ~SonoraClient() override;
 
   SonoraClient(const SonoraClient&) = delete;
   SonoraClient& operator=(const SonoraClient&) = delete;
@@ -25,6 +37,11 @@ class SonoraClient final : public CefClient,
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
+  CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+  bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame,
+                                CefProcessId source_process,
+                                CefRefPtr<CefProcessMessage> message) override;
 
   // CefLifeSpanHandler
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
@@ -44,6 +61,18 @@ class SonoraClient final : public CefClient,
                      CefEventHandle os_event,
                      bool* is_keyboard_shortcut) override;
 
+  // CefRequestHandler -- implemented only to keep the bridge router informed
+  // about navigation and renderer death, both of which strand pending queries.
+  bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
+                      CefRefPtr<CefFrame> frame,
+                      CefRefPtr<CefRequest> request,
+                      bool user_gesture,
+                      bool is_redirect) override;
+  void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                 TerminationStatus status,
+                                 int error_code,
+                                 const CefString& error_string) override;
+
   // Native handle of the browser view, for the host to keep sized. Null until
   // the browser exists.
   [[nodiscard]] void* BrowserViewHandle() const;
@@ -53,16 +82,12 @@ class SonoraClient final : public CefClient,
   //
   // Returns true  -> the request is in flight; leave the window open.
   // Returns false -> nothing left to wait for; close the window now.
-  //
-  // The false case covers both "there is no browser" and "CEF has already
-  // agreed to the close and is asking the window to go away". Conflating them
-  // is deliberate: from the window's point of view they are the same
-  // instruction.
   bool RequestClose();
 
  private:
   Options options_;
   CefRefPtr<CefBrowser> browser_;
+  std::unique_ptr<BridgeRouter> router_;
 
   // Set by DoClose. See the comment there -- this one flag is the difference
   // between a window that closes and a window that cannot be closed at all.

@@ -49,4 +49,5 @@ if (-not $NoWorkarounds) {
 if ($switches) {
     Write-Host "Launching with: $($switches -join ' ')" -ForegroundColor DarkYellow
 }
+
 & $exe @switches

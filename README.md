@@ -8,9 +8,9 @@ Sonora is built the way large desktop applications actually are: a native core
 that owns audio and platform integration, a web layer that owns the interface,
 and a versioned bridge between them so the two can ship independently.
 
-> **Status: week 2 of 13.** The shell hosts a Chromium view that loads the UI
-> over a custom `sonora://` scheme. There is no bridge between them yet.
-> See [ROADMAP.md](ROADMAP.md) for what lands when.
+> **Status: week 3 of 13.** The shell hosts a Chromium view, serves the UI over
+> a custom `sonora://` scheme, and the two talk over a typed bridge generated
+> from one schema. See [ROADMAP.md](ROADMAP.md) for what lands when.
 
 ---
 
@@ -22,10 +22,11 @@ and a versioned bridge between them so the two can ship independently.
 | CEF embedded, separate helper process, external message pump | working |
 | `sonora://app` custom scheme, embedded UI bundle | working |
 | DevTools on F12, debug builds only | working |
-| Playback state machine, asset store — unit tested | working |
+| Typed native↔web bridge, generated from `schema/bridge.schema.json` | working |
+| Playback state machine, asset store, bridge protocol — unit tested | working |
 | Platform abstraction, macOS backend | written, compiled in CI, **not tested on hardware** |
 | Platform abstraction, Linux backend | stub; fails with a clear message at runtime |
-| Typed native↔web bridge | weeks 3-4 |
+| Capability negotiation, push events | week 4 |
 | Audio engine, gapless playback | weeks 5-6 |
 | Local library + real UI | week 7 |
 | SMTC, media keys, tray, jump list | weeks 8-9 |
@@ -78,6 +79,29 @@ Commit the regenerated `cmake/cef_version.cmake`: the build never resolves
 "latest" at configure time, so a checkout from a year from now builds the same
 thing.
 
+### Changing the bridge
+
+`schema/bridge.schema.json` is the only place a method is defined. Add one,
+rebuild, and the C++ will not compile until it is implemented — the handler
+interface is generated pure virtual on purpose. The TypeScript gets the new
+signature in the same build.
+
+```powershell
+cmake --build --preset win-debug   # regenerates the C++ half
+cd ui; npm run generate            # regenerates the TypeScript half
+```
+
+The generated TypeScript is not committed: it is a build product, and `npm run
+build` and `npm run typecheck` regenerate it first. See
+[ADR 0004](docs/adr/0004-the-bridge-is-generated-from-a-schema.md).
+
+From the DevTools console (or Chrome at the remote debugging URL):
+
+```js
+await sonora.shell.getVersion()
+await sonora.shell.echo({ message: 'hi', repeat: 3 })
+```
+
 ### Working on the UI
 
 Debug builds serve the UI from `ui/dist` on disk, so a UI change is a reload
@@ -116,12 +140,14 @@ finds. Override with `$env:CMAKE_GENERATOR`.
 ```
 src/core/        playback state — no OS dependency, no screen, no sound card
 src/assets/      the web bundle as bytes: embedded table + the two stores that serve it
+src/bridge/      the native<->web protocol: envelope, errors, generated dispatch — no CEF
 src/platform/    iface/ + win/ + mac/ + linux/ — the only place #ifdef on the OS is allowed
 src/shell/       the executable: window, CEF host, scheme handler, helper process
 ui/              the web interface (TypeScript + Vite)
 tests/           Catch2, runs against core and assets on every platform
-cmake/           CEF provisioning and pinning, asset embedding
-tools/           pin_cef.py, embed_assets.py, format.ps1
+schema/          bridge.schema.json — the single source of truth for the bridge
+cmake/           CEF provisioning and pinning, asset and bridge generation
+tools/           pin_cef.py, embed_assets.py, gen_bridge.py, format.ps1, run-dev.ps1
 docs/adr/        architecture decision records
 ```
 
@@ -134,6 +160,9 @@ Three decisions shape the rest:
 - [ADR 0003](docs/adr/0003-serving-the-ui-over-a-custom-scheme.md) — the UI is
   served over `sonora://`, not `file://` and not a localhost server, and is
   embedded in the binary for release.
+- [ADR 0004](docs/adr/0004-the-bridge-is-generated-from-a-schema.md) — the
+  bridge is generated from one schema, and the generated handler interface is
+  pure virtual, so the two ends cannot drift without breaking the build.
 - The native loop stays in charge and CEF runs on an external message pump, so
   there is one message loop in the process rather than two fighting over it.
 

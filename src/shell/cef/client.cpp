@@ -5,6 +5,7 @@
 #include <string>
 #include <utility>
 
+#include "cef/bridge_router.h"
 #include "include/cef_parser.h"
 #include "include/wrapper/cef_helpers.h"
 
@@ -28,7 +29,26 @@ std::string ErrorPage(const CefString& error_text, const CefString& failed_url) 
 
 }  // namespace
 
-SonoraClient::SonoraClient(Options options) : options_(options) {}
+SonoraClient::SonoraClient(Options options) : options_(options) {
+  if (options_.handlers != nullptr) {
+    router_ = std::make_unique<BridgeRouter>(*options_.handlers);
+  }
+}
+
+SonoraClient::~SonoraClient() = default;
+
+bool SonoraClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                            CefRefPtr<CefFrame> frame,
+                                            CefProcessId source_process,
+                                            CefRefPtr<CefProcessMessage> message) {
+  CEF_REQUIRE_UI_THREAD();
+  // Every bridge answer travels as a process message. Forgetting this one
+  // forwarding call is how a bridge ends up silently never replying.
+  if (router_ && router_->OnProcessMessageReceived(browser, frame, source_process, message)) {
+    return true;
+  }
+  return false;
+}
 
 void SonoraClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
@@ -60,7 +80,9 @@ bool SonoraClient::DoClose(CefRefPtr<CefBrowser> browser) {
 
 void SonoraClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
-  (void)browser;
+  if (router_) {
+    router_->OnBeforeClose(browser);
+  }
   browser_ = nullptr;
   platform::RequestQuit(0);
 }
@@ -102,16 +124,44 @@ bool SonoraClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
     // Chrome style produced a window it could not populate. DevTools lives on
     // the Chrome UI layer and makes assumptions about its own window that a
     // client-provided one does not satisfy, so the fix is to stop providing one.
-    //
-    // The wrapper always passes the struct by address (see
-    // libcef_dll/ctocpp/browser_host_ctocpp.cc), so "empty" here means a
-    // zeroed cef_window_info_t, which is exactly the default configuration.
     browser->GetHost()->ShowDevTools(CefWindowInfo(), nullptr, CefBrowserSettings(),
                                      CefPoint());
-
     return true;  // handled; do not forward to the page
   }
   return false;
+}
+
+bool SonoraClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefFrame> frame,
+                                  CefRefPtr<CefRequest> request,
+                                  bool user_gesture,
+                                  bool is_redirect) {
+  CEF_REQUIRE_UI_THREAD();
+  (void)request;
+  (void)user_gesture;
+  (void)is_redirect;
+
+  // Navigating away strands every query the old page had in flight. Telling
+  // the router lets it cancel them instead of holding callbacks into a frame
+  // that is about to disappear.
+  if (router_) {
+    router_->OnBeforeBrowse(browser, frame);
+  }
+  return false;  // allow the navigation
+}
+
+void SonoraClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                             TerminationStatus status,
+                                             int error_code,
+                                             const CefString& error_string) {
+  CEF_REQUIRE_UI_THREAD();
+  (void)status;
+  (void)error_code;
+  (void)error_string;
+
+  if (router_) {
+    router_->OnRenderProcessTerminated(browser);
+  }
 }
 
 void* SonoraClient::BrowserViewHandle() const {

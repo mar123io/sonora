@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "cef/client.h"
+#include "cef/render_process.h"
 #include "cef/scheme_handler.h"
 #include "include/cef_browser.h"
 #include "include/wrapper/cef_helpers.h"
@@ -12,12 +13,22 @@
 namespace sonora::shell {
 
 SonoraApp::SonoraApp(Options options)
-    : options_(std::move(options)), is_browser_process_(true) {}
+    : options_(std::move(options)),
+      is_browser_process_(true),
+      render_handler_(new SonoraRenderProcessHandler()) {}
 
-SonoraApp::SonoraApp() = default;
+SonoraApp::SonoraApp() : render_handler_(new SonoraRenderProcessHandler()) {}
+
+SonoraApp::~SonoraApp() = default;
 
 CefRefPtr<CefBrowserProcessHandler> SonoraApp::GetBrowserProcessHandler() {
   return is_browser_process_ ? this : nullptr;
+}
+
+CefRefPtr<CefRenderProcessHandler> SonoraApp::GetRenderProcessHandler() {
+  // CEF only asks for this in a render process, so returning it unconditionally
+  // costs nothing and removes a way to get the wiring wrong.
+  return render_handler_;
 }
 
 void SonoraApp::OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) {
@@ -29,7 +40,10 @@ void SonoraApp::OnContextInitialized() {
 
   RegisterSonoraSchemeHandlerFactory(options_.asset_store);
 
-  client_ = new SonoraClient(SonoraClient::Options{options_.enable_devtools});
+  SonoraClient::Options client_options;
+  client_options.enable_devtools = options_.enable_devtools;
+  client_options.handlers = options_.bridge_handlers;
+  client_ = new SonoraClient(client_options);
 
   CefWindowInfo window_info;
   const CefRect bounds(0, 0, options_.initial_width_px, options_.initial_height_px);

@@ -4,6 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "generate": "python ../tools/gen_bridge.py --schema ../schema/bridge.schema.json --ts src/bridge/generated.ts",
+    "prebuild": "npm run generate",
+    "pretypecheck": "npm run generate",
+    "predev": "npm run generate",
     "build": "tsc --noEmit && vite build",
     "dev": "vite build --watch",
     "typecheck": "tsc --noEmit"

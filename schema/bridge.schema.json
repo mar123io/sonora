@@ -1,0 +1,61 @@
+{
+  "$comment": [
+    "The single source of truth for the native<->web bridge.",
+    "",
+    "Nothing here is written by hand on either side: tools/gen_bridge.py emits",
+    "the C++ request/response structs, the handler interface and the dispatch",
+    "table, and the TypeScript types and typed call wrappers. Adding a method",
+    "below and rebuilding makes the C++ fail to compile until it is implemented,",
+    "which is the point -- the schema cannot drift away from either end.",
+    "",
+    "Field types: string, int, double, bool. Add \"array\": true for a list,",
+    "\"optional\": true for a field that may be absent.",
+    "",
+    "Capabilities group methods and carry a version. Week 4 uses that version to",
+    "let a newer UI run against an older shell; week 3 only records it."
+  ],
+
+  "protocolVersion": 1,
+
+  "capabilities": [
+    {
+      "name": "shell",
+      "version": 1,
+      "summary": "Information about the native shell hosting this page.",
+      "methods": [
+        {
+          "name": "getVersion",
+          "summary": "Versions of the shell and of the embedded browser.",
+          "params": [],
+          "result": [
+            { "name": "version", "type": "string", "summary": "Sonora's semantic version." },
+            { "name": "gitDescribe", "type": "string", "summary": "git describe at build time." },
+            { "name": "cefVersion", "type": "string", "summary": "CEF version the shell links." },
+            { "name": "chromiumVersion", "type": "string", "summary": "Chromium version behind it." }
+          ]
+        },
+        {
+          "name": "echo",
+          "summary": "Round-trips a string through the native side. Exists to prove the bridge end to end, and to exercise the failure path: an empty message is rejected.",
+          "params": [
+            { "name": "message", "type": "string", "summary": "Text to send back." },
+            { "name": "repeat", "type": "int", "optional": true, "summary": "How many copies to return. Defaults to 1, maximum 64." }
+          ],
+          "result": [
+            { "name": "message", "type": "string", "summary": "The message, repeated." },
+            { "name": "lengthBytes", "type": "int", "summary": "Length of the returned message in UTF-8 bytes." }
+          ]
+        },
+        {
+          "name": "listCapabilities",
+          "summary": "Names and versions of the capabilities this shell exposes. Week 4 builds negotiation on top of this.",
+          "params": [],
+          "result": [
+            { "name": "names", "type": "string", "array": true, "summary": "Capability names." },
+            { "name": "versions", "type": "int", "array": true, "summary": "Version of each capability, in the same order." }
+          ]
+        }
+      ]
+    }
+  ]
+}

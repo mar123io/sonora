@@ -27,7 +27,7 @@ Formato: cosa ho fatto · cosa è costato più del previsto · cosa ho imparato.
 - [ ] Ridimensionamento e dimensione minima verificati a mano
 - [ ] Spostamento tra due monitor a DPI diversi senza "salto"
 - [ ] CI verde su tutti e tre i runner
-- [ ] `git tag v0.1-shell`
+- [x] `git tag v0.1-shell` (pushato)
 
 Oltre a quanto previsto sono entrati anche due ADR, il diario e la CI
 multipiattaforma, che la roadmap non collocava esplicitamente in settimana 1.
@@ -94,9 +94,9 @@ aprono in debug e non in release, alla chiusura tutti i sottoprocessi terminano.
 - [x] Message pump esterno: un solo loop nativo nel processo
 - [x] Asset store estratto in `src/assets/`, 9 test suoi, path traversal coperto
 - [ ] F12 apre i DevTools in debug e non in release
-- [ ] Alla chiusura tutti i sottoprocessi terminano (Task Manager)
+- [x] Alla chiusura tutti i sottoprocessi terminano (Task Manager)
 - [ ] CI verde
-- [ ] `git tag v0.2-cef`
+- [x] `git tag v0.2-cef` — creato in locale, **mai pushato**
 
 ### Cosa è costato più del previsto
 
@@ -162,7 +162,8 @@ aggiornato le occorrenze di `AssetStore` ma non quelle di `Asset` nudo.
 
 ## Settimana 3 — Protocollo tipizzato
 
-**Pianificata:** 5-11 ott 2026 · **Stima:** 9 h
+**Pianificata:** 5-11 ott 2026 · **Effettiva:** 24 set 2026 (chiusa in anticipo)
+**Stima:** 9 h · **Effettivo:** ___ h
 
 ### Obiettivo
 
@@ -170,4 +171,110 @@ Aggiungere un metodo in `schema/bridge.schema.json`, ricompilare, e chiamarlo
 dalla console JS con i tipi completi — senza aver scritto una riga di
 boilerplate.
 
-_(da compilare a fine settimana)_
+### Fatto
+
+- [x] `schema/bridge.schema.json` come unica sorgente di verità, `protocolVersion: 1`
+- [x] `tools/gen_bridge.py` genera header C++, dispatch e TypeScript
+- [x] Interfaccia handler generata **pure virtual**: un metodo nuovo rompe la build
+- [x] `src/bridge/` senza alcuna dipendenza da CEF, testato anche su Linux/macOS
+- [x] `CefMessageRouter` sui due lati, `sonoraQuery` / `sonoraQueryCancel`
+- [x] `invoke()` tipizzato lato UI, con timeout a 10 s e cancellazione reale
+- [x] Cinque righe diagnostiche in pagina, la quinta fallisce apposta
+- [x] Build completa verde: `sonora_bridge`, `sonora_cef`, `sonora_helper`, `Sonora`, `sonora_tests`
+- [x] La quinta riga riporta `code 3` e non un valore di memoria non inizializzata
+- [ ] CI verde
+- [ ] Committata (vedi "Da riprendere": non lo è ancora)
+
+### Cosa è costato più del previsto
+
+Di nuovo: **il protocollo e il generatore sono usciti al primo colpo**, 32 test
+verdi. Il tempo è andato tutto su due problemi di linguaggio e uno di rumore.
+
+1. **`C2027: utilizzo di tipo non definito 'SonoraRenderProcessHandler'`.**
+   `app.h` tiene `CefRefPtr<>` di tipi dichiarati solo in avanti. Il distruttore
+   implicito di `SonoraApp` chiama `Release()` su quei membri, e `Release()`
+   vuole il tipo completo — quindi il distruttore veniva istanziato in ogni
+   unità di traduzione che includeva l'header, e compilava o no a seconda di
+   *cos'altro* quel file avesse incluso. Il codice non era sbagliato in un punto:
+   era fragile ovunque. Risolto dichiarando `~SonoraApp()` e definendolo nel
+   `.cpp`, dove i tipi sono completi.
+
+2. **La riga di errore arrivava in pagina come `code -858993460`** con un
+   messaggio di caratteri casuali. `-858993460` è `0xCDCDCDCD`: il riempimento
+   MSVC per la memoria heap non inizializzata. Non un errore di logica, un
+   oggetto letto prima di esistere.
+
+   La causa era a due livelli di distanza. `SET_LIBRARY_TARGET_PROPERTIES(sonora_cef)`
+   applica `CEF_COMPILER_DEFINES`, che contiene `_HAS_EXCEPTIONS=0` e `/GR-`
+   senza alcun `/EH`. Quindi `cef/handlers.cpp` — che segnala gli errori
+   lanciando `bridge::BridgeError` — veniva compilato con le eccezioni spente,
+   mentre il `catch` vive in `sonora_bridge`, compilato normalmente. Lanciare
+   attraverso quel confine è comportamento indefinito, e si comportava come tale.
+
+   **Il percorso felice funzionava perfettamente.** Quattro righe verdi su
+   cinque. Solo il ramo di errore attraversava il confine, ed è esattamente il
+   ramo che si prova meno.
+
+3. **Tolte le macro di CEF, sono tornate centinaia di `C4100`** dai suoi header,
+   perché in quella lista di flag c'era anche `/wd4100` e le classi base di CEF
+   sono piene di implementazioni di default che nominano parametri e non li
+   usano. Risolto facendo entrare `${CEF_ROOT}` come header *esterni*
+   (`/external:I` + `/external:W0`) invece che come normale include path — non
+   spegnendo `C4100`, che su `cef/*.cpp` continua a dire qualcosa di vero.
+
+   Due dettagli rendono la correzione fragile se fatta a metà: `${CEF_ROOT}`
+   non deve restare *anche* fra gli include normali, perché `/I` viene cercato
+   per primo e un header trovato lì non è esterno; e `/external:I` da solo non
+   fa nulla, è `/external:W0` che abbassa il livello. Scritti a mano invece di
+   usare la keyword `SYSTEM` di `target_include_directories`, la cui mappatura
+   su `/external:` dipende da versione di CMake e generatore e che non avevo
+   modo di verificare. Il modo di fallire è comunque leggibile: se i flag non
+   arrivassero al compilatore la build si fermerebbe su `cannot open include
+   file: 'include/cef_app.h'` invece di tornare silenziosamente rumorosa. La
+   build successiva è passata, quindi ci sono arrivati.
+
+### Cosa ho imparato
+
+- **Le macro di build di una dipendenza codificano la politica di linguaggio
+  della dipendenza.** Adottarle in blocco adotta silenziosamente quella politica
+  anche per il proprio codice — qui: niente eccezioni, niente RTTI. È la stessa
+  lezione della settimana 2 (`SET_EXECUTABLE_TARGET_PROPERTIES` sovrascrive
+  `LINK_FLAGS`) portata al suo caso peggiore: lì perdevo un flag, qui cambiava
+  il significato di `throw`.
+- **I pattern di riempimento di MSVC sono informazione, non rumore.**
+  `0xCDCDCDCD` heap non inizializzato, `0xCCCCCCCC` stack, `0xFEEEFEEE`
+  liberato, `0xDDDDDDDD` cancellato. Riconoscere il valore ha portato dalla
+  domanda sbagliata ("perché il codice di errore è negativo?") a quella giusta
+  ("chi ha letto quell'oggetto prima che esistesse?").
+- **Smettere di usare i flag di una dipendenza significa possederli tutti, uno
+  per uno.** `/STACK:0x800000`, `/MANIFEST:NO`, `/SUBSYSTEM`, `/ENTRY`,
+  `/wd4100`: tolta la macro, ognuno di questi va rimesso *sapendo perché*. La
+  sequenza LNK4199 → C4100 è la stessa storia due volte, ed è la ragione per cui
+  ogni soppressione in questo progetto ha un commento che dice cosa nasconde.
+- **Un'interfaccia generata pure virtual è il modo più economico di rendere un
+  contratto verificabile dal compilatore.** Aggiungere un metodo allo schema non
+  produce un TODO: produce un errore di compilazione, subito, su entrambi i lati.
+- **Il confine nativo↔web va trattato come non fidato anche quando la pagina è
+  nostra.** `Request::Parse` controlla ogni campo. Un renderer è a una dipendenza
+  compromessa di distanza dal poter mandare qualunque cosa.
+
+### Da riprendere
+
+- La quinta riga diagnostica è verde: `BridgeError` attraversa il confine con
+  `code === 3` e il suo messaggio intatto. Fra "linka" e "si comporta" c'era una
+  distanza reale — il binario precedente linkava benissimo e restituiva
+  `0xCDCDCDCD`.
+- **La settimana 3 non è mai stata committata**, e la settimana 4 è stata
+  scritta sopra lo stesso working tree. Quando me ne sono accorto non esisteva
+  più uno stato "fine settimana 3" da cui fare un commit: gli stessi file
+  (`schema/`, `handlers.cpp`, `ui/src/main.ts`) contengono ormai entrambe le
+  settimane. Committare a fine settimana non è disciplina per il gusto di
+  esserlo — è ciò che rende una settimana una cosa separabile dalla successiva.
+  Da qui in avanti: commit e tag *prima* di aprire la settimana dopo.
+- Il tag `v0.2-cef` esiste in locale da due settimane e non è mai stato pushato.
+  `git push` non porta i tag da solo, e questo è il tipo di dettaglio che si
+  scopre quando qualcun altro clona il repo e non trova la storia che gli hai
+  descritto.
+- CI ancora mai eseguita. Terza settimana di fila che questa riga resta qui: i
+  job macOS e Linux sono ipotesi, non verifiche. `docs/ci-workflow.yml` è ancora
+  da spostare a mano in `.github/workflows/ci.yml`.
