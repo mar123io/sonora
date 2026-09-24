@@ -12,6 +12,8 @@ sonora_generate_bridge(SONORA_BRIDGE_HEADER SONORA_BRIDGE_SOURCE)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 add_library(sonora_bridge STATIC
+  src/capabilities.cpp
+  src/event_coalescer.cpp
   src/protocol.cpp
   "${SONORA_BRIDGE_SOURCE}")
 add_library(sonora::bridge ALIAS sonora_bridge)

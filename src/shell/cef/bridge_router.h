@@ -6,9 +6,12 @@
 
 namespace sonora::bridge {
 class BridgeHandlers;
+class CapabilityRegistry;
 }  // namespace sonora::bridge
 
 namespace sonora::shell {
+
+class ShellMetrics;
 
 // Both processes must build the router from identical configuration, so the
 // names of the injected JavaScript functions are defined once, here, and used
@@ -20,9 +23,15 @@ namespace sonora::shell {
 // Its whole job is to move two strings: a request out of the page and into
 // bridge::Dispatch, and an answer back. Everything about what the methods mean
 // lives in the portable bridge target, which is why this file is short.
+//
+// Events go the other way and do not come through here at all; see
+// cef/event_channel.h.
 class BridgeRouter {
  public:
-  explicit BridgeRouter(bridge::BridgeHandlers& handlers);
+  // All three references must outlive the router.
+  BridgeRouter(bridge::BridgeHandlers& handlers,
+               const bridge::CapabilityRegistry& capabilities,
+               ShellMetrics& metrics);
   ~BridgeRouter();
 
   BridgeRouter(const BridgeRouter&) = delete;

@@ -59,6 +59,11 @@ int sonora::platform::AppMain() {
     return 1;
   }
 
+  // Printed rather than left implicit: a capability switched off by an
+  // environment variable is invisible from inside the application, and the
+  // first symptom is a part of the interface quietly not being there.
+  std::printf("capabilities: %s\n", sonora::shell::CapabilitySummary().c_str());
+
   // The browser view is a native child of the window, so the host owns its
   // geometry. CEF never resizes itself.
   window->SetOnResize([](int width_px, int height_px) {

@@ -1,8 +1,10 @@
 #include "cef/bridge_router.h"
 
 #include <bridge_generated.h>
+#include <sonora/bridge/capabilities.h>
 #include <sonora/bridge/protocol.h>
 
+#include "cef/shell_metrics.h"
 #include "include/wrapper/cef_helpers.h"
 
 namespace sonora::shell {
@@ -25,7 +27,10 @@ CefMessageRouterConfig BridgeRouterConfig() {
 
 class BridgeRouter::QueryHandler final : public CefMessageRouterBrowserSide::Handler {
  public:
-  explicit QueryHandler(bridge::BridgeHandlers& handlers) : handlers_(handlers) {}
+  QueryHandler(bridge::BridgeHandlers& handlers,
+               const bridge::CapabilityRegistry& capabilities,
+               ShellMetrics& metrics)
+      : handlers_(handlers), capabilities_(capabilities), metrics_(metrics) {}
 
   // The base declares two OnQuery overloads, one string and one binary. We
   // override only the string one; without this the other would be hidden.
@@ -43,17 +48,22 @@ class BridgeRouter::QueryHandler final : public CefMessageRouterBrowserSide::Han
     (void)query_id;
 
     if (persistent) {
-      // A persistent query is a subscription: one request, many answers. That
-      // is what push events will be built on in week 4. Refusing it clearly
-      // now is better than half-answering it.
+      // A persistent query is one request with many answers, which sounds like
+      // the way to push events and is not. It ties every event to a call the
+      // page made and to the frame that made it, so a reload silently ends the
+      // stream, and it gives the native side no way to speak first. Events go
+      // through EventChannel instead, and this stays refused.
       callback->Failure(static_cast<int>(bridge::ErrorCode::kUnavailable),
-                        "persistent queries are not supported yet");
+                        "persistent queries are not supported; events are pushed, not polled");
       return true;
     }
 
+    metrics_.NoteQuery();
+
     // Dispatch is documented never to throw, which matters here: this runs
     // inside a CEF callback with no way to report an escaped exception.
-    const bridge::Response response = bridge::Dispatch(handlers_, request.ToString());
+    const bridge::Response response =
+        bridge::Dispatch(handlers_, capabilities_, request.ToString());
     if (response.ok) {
       callback->Success(response.payload);
     } else {
@@ -67,10 +77,14 @@ class BridgeRouter::QueryHandler final : public CefMessageRouterBrowserSide::Han
 
  private:
   bridge::BridgeHandlers& handlers_;
+  const bridge::CapabilityRegistry& capabilities_;
+  ShellMetrics& metrics_;
 };
 
-BridgeRouter::BridgeRouter(bridge::BridgeHandlers& handlers)
-    : query_handler_(std::make_unique<QueryHandler>(handlers)),
+BridgeRouter::BridgeRouter(bridge::BridgeHandlers& handlers,
+                           const bridge::CapabilityRegistry& capabilities,
+                           ShellMetrics& metrics)
+    : query_handler_(std::make_unique<QueryHandler>(handlers, capabilities, metrics)),
       router_(CefMessageRouterBrowserSide::Create(BridgeRouterConfig())) {
   router_->AddHandler(query_handler_.get(), /*first=*/false);
 }

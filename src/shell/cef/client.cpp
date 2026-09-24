@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "cef/bridge_router.h"
+#include "cef/event_channel.h"
 #include "include/cef_parser.h"
 #include "include/wrapper/cef_helpers.h"
 
@@ -30,8 +31,10 @@ std::string ErrorPage(const CefString& error_text, const CefString& failed_url) 
 }  // namespace
 
 SonoraClient::SonoraClient(Options options) : options_(options) {
-  if (options_.handlers != nullptr) {
-    router_ = std::make_unique<BridgeRouter>(*options_.handlers);
+  if (options_.handlers != nullptr && options_.capabilities != nullptr &&
+      options_.metrics != nullptr) {
+    router_ = std::make_unique<BridgeRouter>(*options_.handlers, *options_.capabilities,
+                                             *options_.metrics);
   }
 }
 
@@ -53,6 +56,12 @@ bool SonoraClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
 void SonoraClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   browser_ = std::move(browser);
+
+  // From here until OnBeforeClose there is a page to push to. Outside that
+  // window the channel drops what it is given rather than queueing it.
+  if (options_.events != nullptr) {
+    options_.events->Attach(browser_);
+  }
 }
 
 bool SonoraClient::DoClose(CefRefPtr<CefBrowser> browser) {
@@ -82,6 +91,11 @@ void SonoraClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   if (router_) {
     router_->OnBeforeClose(browser);
+  }
+  if (options_.events != nullptr) {
+    // Before browser_ is cleared, and before CefShutdown: a flush timer that
+    // fires after this would otherwise reach a frame that no longer exists.
+    options_.events->Detach();
   }
   browser_ = nullptr;
   platform::RequestQuit(0);

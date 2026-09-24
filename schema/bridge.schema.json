@@ -8,19 +8,36 @@
     "below and rebuilding makes the C++ fail to compile until it is implemented,",
     "which is the point -- the schema cannot drift away from either end.",
     "",
-    "Field types: string, int, double, bool. Add \"array\": true for a list,",
-    "\"optional\": true for a field that may be absent.",
+    "Field types: string, int, double, bool, or the name of an entry in",
+    "\"types\". Add \"array\": true for a list, \"optional\": true for a field that",
+    "may be absent.",
     "",
-    "Capabilities group methods and carry a version. Week 4 uses that version to",
-    "let a newer UI run against an older shell; week 3 only records it."
+    "A capability groups methods and events and carries a version. The UI reads",
+    "that version from shell.getCapabilities() and degrades when something it",
+    "wants is missing or older than it needs. SONORA_DISABLE_CAPS turns one off",
+    "at runtime so the degraded path can be exercised on demand instead of only",
+    "on an old build. A capability marked \"required\" cannot be turned off: with",
+    "shell.getCapabilities() gone there is nothing left to negotiate with."
   ],
 
   "protocolVersion": 1,
 
+  "types": {
+    "Capability": {
+      "summary": "One capability, as the shell currently reports it.",
+      "fields": [
+        { "name": "name", "type": "string", "summary": "Capability name, as used in a method's prefix." },
+        { "name": "version", "type": "int", "summary": "Version the shell implements." },
+        { "name": "enabled", "type": "bool", "summary": "False when this build or this run has it switched off." }
+      ]
+    }
+  },
+
   "capabilities": [
     {
       "name": "shell",
-      "version": 1,
+      "version": 2,
+      "required": true,
       "summary": "Information about the native shell hosting this page.",
       "methods": [
         {
@@ -47,12 +64,42 @@
           ]
         },
         {
-          "name": "listCapabilities",
-          "summary": "Names and versions of the capabilities this shell exposes. Week 4 builds negotiation on top of this.",
+          "name": "getCapabilities",
+          "summary": "What this shell exposes right now, including what is switched off. The first call a page should make: everything else depends on the answer.",
           "params": [],
           "result": [
-            { "name": "names", "type": "string", "array": true, "summary": "Capability names." },
-            { "name": "versions", "type": "int", "array": true, "summary": "Version of each capability, in the same order." }
+            { "name": "protocolVersion", "type": "int", "summary": "Envelope version the shell speaks." },
+            { "name": "capabilities", "type": "Capability", "array": true, "summary": "Every capability the build knows about, enabled or not." }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "diagnostics",
+      "version": 1,
+      "summary": "Numbers about the running process. Present in every build, and the one capability a deployment might reasonably switch off, which makes it the test subject for negotiation.",
+      "methods": [
+        {
+          "name": "getMetrics",
+          "summary": "A snapshot of the bridge's own counters.",
+          "params": [],
+          "result": [
+            { "name": "uptimeMs", "type": "int", "summary": "Milliseconds since the shell finished starting." },
+            { "name": "queriesHandled", "type": "int", "summary": "Requests dispatched since startup." },
+            { "name": "eventsPosted", "type": "int", "summary": "Events the native side produced." },
+            { "name": "eventsDelivered", "type": "int", "summary": "Events that actually reached the page." },
+            { "name": "eventsCoalesced", "type": "int", "summary": "Events replaced by a newer one before they were sent. posted = delivered + coalesced + whatever is still pending." }
+          ]
+        }
+      ],
+      "events": [
+        {
+          "name": "heartbeat",
+          "coalesce": true,
+          "summary": "Emitted far faster than it is delivered, on purpose: it is the shape every later event has -- playback position, buffer level, download progress -- where the producer runs at its own rate and the UI only needs the newest value.",
+          "payload": [
+            { "name": "sequence", "type": "int", "summary": "Increments once per emission, including the ones that never arrive. Gaps are the coalescing, visible from the page." },
+            { "name": "uptimeMs", "type": "int", "summary": "Milliseconds since the shell finished starting." }
           ]
         }
       ]

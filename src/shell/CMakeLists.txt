@@ -10,10 +10,12 @@ add_library(sonora_cef STATIC
   cef/app.cpp
   cef/bridge_router.cpp
   cef/client.cpp
+  cef/event_channel.cpp
   cef/handlers.cpp
   cef/render_process.cpp
   cef/runtime.cpp
-  cef/scheme_handler.cpp)
+  cef/scheme_handler.cpp
+  cef/timer.cpp)
 
 target_include_directories(sonora_cef PUBLIC
   "${CMAKE_CURRENT_LIST_DIR}")  # so #include "cef/app.h" resolves

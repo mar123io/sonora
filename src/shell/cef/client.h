@@ -6,11 +6,14 @@
 
 namespace sonora::bridge {
 class BridgeHandlers;
+class CapabilityRegistry;
 }  // namespace sonora::bridge
 
 namespace sonora::shell {
 
 class BridgeRouter;
+class EventChannel;
+class ShellMetrics;
 
 // The browser-side handler set. One object implements every handler CEF asks
 // for; CefClient is a collection of factories rather than a base class with
@@ -23,8 +26,13 @@ class SonoraClient final : public CefClient,
  public:
   struct Options {
     bool enable_devtools = false;
-    // Must outlive the client. Owned by the runtime.
+    // All four must outlive the client. Owned by the runtime.
     bridge::BridgeHandlers* handlers = nullptr;
+    const bridge::CapabilityRegistry* capabilities = nullptr;
+    ShellMetrics* metrics = nullptr;
+    // The client is what knows when a browser exists, so it is what tells the
+    // event channel where to send and when to stop.
+    EventChannel* events = nullptr;
   };
 
   explicit SonoraClient(Options options);

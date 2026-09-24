@@ -8,9 +8,10 @@ Sonora is built the way large desktop applications actually are: a native core
 that owns audio and platform integration, a web layer that owns the interface,
 and a versioned bridge between them so the two can ship independently.
 
-> **Status: week 3 of 13.** The shell hosts a Chromium view, serves the UI over
-> a custom `sonora://` scheme, and the two talk over a typed bridge generated
-> from one schema. See [ROADMAP.md](ROADMAP.md) for what lands when.
+> **Status: week 4 of 13.** The shell hosts a Chromium view, serves the UI over
+> a custom `sonora://` scheme, and the two talk over a typed, versioned bridge
+> generated from one schema — methods in one direction, coalesced events in the
+> other. See [ROADMAP.md](ROADMAP.md) for what lands when.
 
 ---
 
@@ -23,10 +24,11 @@ and a versioned bridge between them so the two can ship independently.
 | `sonora://app` custom scheme, embedded UI bundle | working |
 | DevTools on F12, debug builds only | working |
 | Typed native↔web bridge, generated from `schema/bridge.schema.json` | working |
-| Playback state machine, asset store, bridge protocol — unit tested | working |
+| Capability negotiation, `SONORA_DISABLE_CAPS`, degraded UI | working |
+| Push events, coalesced to 4 Hz, generated and typed on both sides | working |
+| Playback state machine, asset store, bridge protocol, capabilities, coalescer — unit tested | working |
 | Platform abstraction, macOS backend | written, compiled in CI, **not tested on hardware** |
 | Platform abstraction, Linux backend | stub; fails with a clear message at runtime |
-| Capability negotiation, push events | week 4 |
 | Audio engine, gapless playback | weeks 5-6 |
 | Local library + real UI | week 7 |
 | SMTC, media keys, tray, jump list | weeks 8-9 |
@@ -100,7 +102,25 @@ From the DevTools console (or Chrome at the remote debugging URL):
 ```js
 await sonora.shell.getVersion()
 await sonora.shell.echo({ message: 'hi', repeat: 3 })
+await sonora.shell.getCapabilities()
+await sonora.diagnostics.getMetrics()
 ```
+
+### Watching the degraded path
+
+A capability can be switched off for one run, so the branch the UI takes when
+something is missing is exercised on a current build rather than only against an
+old one:
+
+```powershell
+./tools/run-dev.ps1 -DisableCaps diagnostics
+```
+
+The diagnostics rows turn amber and say they are switched off, the heartbeat is
+never subscribed to, and `diagnostics.getMetrics` answers with error code 4
+(`unavailable`) rather than 2 (`unknown method`) — the difference the page
+branches on. `shell` is marked required in the schema and refuses to be
+disabled: with `getCapabilities` gone there is nothing left to negotiate with.
 
 ### Working on the UI
 
@@ -163,6 +183,10 @@ Three decisions shape the rest:
 - [ADR 0004](docs/adr/0004-the-bridge-is-generated-from-a-schema.md) — the
   bridge is generated from one schema, and the generated handler interface is
   pure virtual, so the two ends cannot drift without breaking the build.
+- [ADR 0005](docs/adr/0005-events-are-pushed-and-coalesced.md) — events are
+  pushed by the shell rather than carried on a persistent query, and the rate
+  limiting that decides what the page sees lives in the portable target where it
+  can be tested with an injected clock.
 - The native loop stays in charge and CEF runs on an external message pump, so
   there is one message loop in the process rather than two fighting over it.
 

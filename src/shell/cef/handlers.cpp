@@ -1,10 +1,13 @@
 #include "cef/handlers.h"
 
 #include <string>
+#include <utility>
 
 #include <sonora/bridge/protocol.h>
 #include <sonora/core/version.h>
 
+#include "cef/event_channel.h"
+#include "cef/shell_metrics.h"
 #include "include/cef_version.h"
 
 namespace sonora::shell {
@@ -22,6 +25,11 @@ namespace {
 constexpr std::int64_t kMaxEchoRepeat = 64;
 
 }  // namespace
+
+ShellHandlers::ShellHandlers(const bridge::CapabilityRegistry& capabilities,
+                             const ShellMetrics& metrics,
+                             const EventChannel& events)
+    : capabilities_(capabilities), metrics_(metrics), events_(events) {}
 
 bridge::ShellGetVersionResult ShellHandlers::ShellGetVersion(
     const bridge::ShellGetVersionParams& params) {
@@ -60,17 +68,37 @@ bridge::ShellEchoResult ShellHandlers::ShellEcho(const bridge::ShellEchoParams& 
   return result;
 }
 
-bridge::ShellListCapabilitiesResult ShellHandlers::ShellListCapabilities(
-    const bridge::ShellListCapabilitiesParams& params) {
+bridge::ShellGetCapabilitiesResult ShellHandlers::ShellGetCapabilities(
+    const bridge::ShellGetCapabilitiesParams& params) {
   (void)params;
 
-  // Read straight off the generated table, so this answer cannot disagree with
-  // what the schema says this build exposes.
-  bridge::ShellListCapabilitiesResult result;
-  for (const auto& capability : bridge::kCapabilities) {
-    result.names.emplace_back(capability.name);
-    result.versions.push_back(capability.version);
+  // Straight off the registry, which was built from the generated table. This
+  // answer cannot disagree with what the schema declares or with what this run
+  // has switched off, because there is no second list to keep in step.
+  bridge::ShellGetCapabilitiesResult result;
+  result.protocolVersion = bridge::kProtocolVersion;
+  for (const bridge::CapabilityState& state : capabilities_.all()) {
+    bridge::Capability capability;
+    capability.name = state.name;
+    capability.version = state.version;
+    capability.enabled = state.enabled;
+    result.capabilities.push_back(std::move(capability));
   }
+  return result;
+}
+
+bridge::DiagnosticsGetMetricsResult ShellHandlers::DiagnosticsGetMetrics(
+    const bridge::DiagnosticsGetMetricsParams& params) {
+  (void)params;
+
+  const bridge::EventCoalescer::Stats& events = events_.stats();
+
+  bridge::DiagnosticsGetMetricsResult result;
+  result.uptimeMs = metrics_.uptime_ms();
+  result.queriesHandled = metrics_.queries_handled();
+  result.eventsPosted = events.posted;
+  result.eventsDelivered = events.delivered;
+  result.eventsCoalesced = events.coalesced;
   return result;
 }
 

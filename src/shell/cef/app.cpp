@@ -43,6 +43,9 @@ void SonoraApp::OnContextInitialized() {
   SonoraClient::Options client_options;
   client_options.enable_devtools = options_.enable_devtools;
   client_options.handlers = options_.bridge_handlers;
+  client_options.capabilities = options_.capabilities;
+  client_options.metrics = options_.metrics;
+  client_options.events = options_.events;
   client_ = new SonoraClient(client_options);
 
   CefWindowInfo window_info;

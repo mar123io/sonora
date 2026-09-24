@@ -7,19 +7,36 @@
 #include <string>
 #include <utility>
 
+#include <sonora/bridge/capabilities.h>
+
 #include "cef/app.h"
 #include "cef/client.h"
+#include "cef/event_channel.h"
 #include "cef/handlers.h"
+#include "cef/shell_metrics.h"
+#include "cef/timer.h"
 #include "include/cef_app.h"
 
 namespace sonora::shell {
 namespace {
 
+// Everything below is owned here so it outlives the client that borrows it,
+// and dies only after CefShutdown has torn down anything that could still call
+// it. The order of declaration is the order of destruction reversed: handlers
+// hold references to the three above them.
 CefRefPtr<SonoraApp> g_app;
-// Owned here so it outlives the client that borrows it, and dies only
-// after CefShutdown has torn down anything that could still call it.
+std::unique_ptr<bridge::CapabilityRegistry> g_capabilities;
+std::unique_ptr<ShellMetrics> g_metrics;
+std::unique_ptr<EventChannel> g_events;
 std::unique_ptr<ShellHandlers> g_handlers;
+CefRefPtr<ShellTimer> g_heartbeat;
 bool g_initialized = false;
+
+// 20 Hz in, 4 Hz out. The ratio is the demonstration: the producer runs at the
+// rate its own work happens at and the coalescer decides what the page sees,
+// which is exactly the arrangement an audio callback will need in week 5.
+constexpr std::int64_t kHeartbeatIntervalMs = 50;
+std::int64_t g_heartbeat_sequence = 0;
 
 std::string Utf8(const std::filesystem::path& path) {
   // path::string() uses the native narrow encoding on Windows and throws on
@@ -92,8 +109,16 @@ bool StartCef(const RuntimeConfig& config) {
   options.enable_devtools = config.enable_devtools;
   options.asset_store = config.asset_store;
 
-  g_handlers = std::make_unique<ShellHandlers>();
+  g_capabilities = std::make_unique<bridge::CapabilityRegistry>(
+      bridge::CapabilityRegistry::FromEnvironment(bridge::kCapabilities));
+  g_metrics = std::make_unique<ShellMetrics>();
+  g_events = std::make_unique<EventChannel>();
+  g_handlers = std::make_unique<ShellHandlers>(*g_capabilities, *g_metrics, *g_events);
+
   options.bridge_handlers = g_handlers.get();
+  options.capabilities = g_capabilities.get();
+  options.metrics = g_metrics.get();
+  options.events = g_events.get();
 
   g_app = new SonoraApp(std::move(options));
 
@@ -111,20 +136,50 @@ bool StartCef(const RuntimeConfig& config) {
   }
   g_initialized = true;
 
+  if (g_capabilities->IsEnabled("diagnostics")) {
+    // Started before the browser exists on purpose: the channel drops what it
+    // cannot deliver, so there is no ordering to get right here, and one less
+    // thing has to survive a browser that comes and goes.
+    //
+    // Note what is not written anywhere here: the string
+    // "diagnostics.heartbeat". bridge::Events is generated from the schema and
+    // has one method per event, so an event that does not exist is a compile
+    // error rather than a message the page never receives.
+    g_heartbeat = ShellTimer::Every(kHeartbeatIntervalMs, [] {
+      bridge::DiagnosticsHeartbeatEvent payload;
+      payload.sequence = ++g_heartbeat_sequence;
+      payload.uptimeMs = g_metrics->uptime_ms();
+      bridge::Events(*g_events).DiagnosticsHeartbeat(payload);
+    });
+  }
+
   // Gets the loop turning so OnContextInitialized fires and the browser is
   // created. Without this the application would sit idle waiting for input.
   platform::ScheduleWork(0);
   return true;
 }
 
+std::string CapabilitySummary() {
+  return g_capabilities ? g_capabilities->Summary() : std::string("not started");
+}
+
 void StopCef() {
   if (!g_initialized) {
     return;
+  }
+  // Cancelled before CefShutdown: a heartbeat that fires during teardown would
+  // reach into an EventChannel that is about to be destroyed.
+  if (g_heartbeat) {
+    g_heartbeat->Cancel();
+    g_heartbeat = nullptr;
   }
   platform::SetWorkCallback(nullptr);
   g_app = nullptr;
   CefShutdown();
   g_handlers.reset();
+  g_events.reset();
+  g_metrics.reset();
+  g_capabilities.reset();
   g_initialized = false;
 }
 

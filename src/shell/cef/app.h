@@ -10,10 +10,13 @@ class AssetStore;
 
 namespace sonora::bridge {
 class BridgeHandlers;
+class CapabilityRegistry;
 }  // namespace sonora::bridge
 
 namespace sonora::shell {
 
+class EventChannel;
+class ShellMetrics;
 class SonoraClient;
 class SonoraRenderProcessHandler;
 
@@ -34,6 +37,9 @@ class SonoraApp final : public CefApp, public CefBrowserProcessHandler {
     bool enable_devtools = false;
     const assets::AssetStore* asset_store = nullptr;
     bridge::BridgeHandlers* bridge_handlers = nullptr;
+    const bridge::CapabilityRegistry* capabilities = nullptr;
+    ShellMetrics* metrics = nullptr;
+    EventChannel* events = nullptr;
   };
 
   // Browser process.

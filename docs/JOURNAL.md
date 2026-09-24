@@ -278,3 +278,138 @@ verdi. Il tempo è andato tutto su due problemi di linguaggio e uno di rumore.
 - CI ancora mai eseguita. Terza settimana di fila che questa riga resta qui: i
   job macOS e Linux sono ipotesi, non verifiche. `docs/ci-workflow.yml` è ancora
   da spostare a mano in `.github/workflows/ci.yml`.
+
+---
+
+## Settimana 4 — Capability negotiation ed eventi
+
+**Pianificata:** 12-18 ott 2026 · **Effettiva:** 24 set 2026
+**Stima:** 9 h · **Effettivo:** ___ h
+**Tag:** `v0.2-bridge` — fase 1 completa
+
+### Obiettivo
+
+Spegnere una capability a runtime e vedere la UI nascondere quel pezzo senza
+errori in console; ricevere eventi dal nativo a una frequenza decisa dallo
+shell e non dal produttore.
+
+### Fatto
+
+- [x] `types` nello schema: record condivisi, `Capability` il primo
+- [x] `events` nello schema, con `coalesce` come proprietà dell'evento
+- [x] `bridge::Events` generata, un metodo per evento: il nome sul filo si scrive una volta sola
+- [x] `shell.listCapabilities` (array paralleli) → `shell.getCapabilities` (`Capability[]`)
+- [x] `CapabilityRegistry` in `src/bridge`, `SONORA_DISABLE_CAPS`, capability `required`
+- [x] Metodo di capability spenta → `kUnavailable` (4), non `kUnknownMethod` (2)
+- [x] `EventCoalescer` con clock e scheduler iniettati, coda limitata, contatori
+- [x] `EventChannel` su CEF: timer sulla UI thread, una chiamata in pagina per batch
+- [x] `CapabilitySet` e `onEvent()` tipizzati lato UI, riga Diagnostics che degrada
+- [x] ADR 0005 su push vs persistent query e sul coalescing
+- [x] 37 test, 148 asserzioni, zero warning su GCC e su MSVC `/W4`
+- [x] Build Windows completa verde, tutti i target
+- [ ] `ctest --preset win-debug` verde — girato, non registrato qui
+- [ ] Heartbeat 20 Hz → 4 Hz osservato in pagina — non registrato
+- [ ] `-DisableCaps diagnostics` osservato in pagina — non registrato
+- [ ] CI verde
+- [ ] `git tag v0.2-bridge`
+
+### Cosa è costato più del previsto
+
+**Niente, nel codice.** Terza settimana di fila che il C++ contro l'API di CEF
+compila al primo colpo — `timer.cpp`, `event_channel.cpp`, il wiring in
+`runtime.cpp` — e la ragione è sempre la stessa: le firme sono state lette dagli
+header di CEF 152 sul disco invece che ricordate. Un solo warning in tutta la
+build, ed era mio.
+
+Il tempo è andato via **fuori dal codice**, e le tre cose che l'hanno preso sono
+tutte di processo.
+
+1. **La settimana 3 non era mai stata committata**, e la 4 era già scritta sopra
+   lo stesso working tree. Quando me ne sono accorto non esisteva più uno stato
+   "fine settimana 3" da cui fare un commit: `schema/`, `handlers.cpp`,
+   `ui/src/main.ts` contenevano ormai entrambe le settimane.
+
+   Ricostruita: 22 file riportati alla versione precedente, 14 file nuovi
+   spostati da parte, commit della settimana 3 verificato con una build sua, poi
+   la settimana 4 rimessa. È costato due build complete e mezz'ora, per una cosa
+   che a fine settimana 3 sarebbe stata un `git commit`.
+
+2. **`.git/index.lock` rimasto appeso**, con `git add` che si rifiutava di
+   partire. La causa è che stavo lanciando comandi git da un filesystem montato
+   dove le cancellazioni sono vietate: git riesce a creare il lucchetto e non a
+   rimuoverlo. Non un bug di git, un ambiente in cui git non può funzionare.
+
+3. **Due trasferimenti arrivati con il contenuto vecchio**, entrambi beccati dal
+   confronto md5 dopo la copia — uno era `test_event_coalescer.cpp` senza
+   `#include <algorithm>`, che sotto MSVC avrebbe compilato lo stesso per
+   inclusione transitiva e sarebbe rimasto lì fino al primo compilatore più
+   severo. È lo stesso incidente della settimana 1, e l'unica ragione per cui
+   questa volta non è costato un giro è che il controllo esiste.
+
+4. **La CI ha girato per la prima volta e ha bocciato il formatting.** 43
+   violazioni in 7 file, tutti miei. La causa non è interessante — clang-format
+   la sistema in un comando — ma il motivo per cui ci è arrivata sì: avevo
+   verificato che il codice compilasse senza warning su GCC e su MSVC `/W4`, che
+   i test passassero e che il TypeScript stesse in piedi sotto le impostazioni
+   strict. Non avevo lanciato l'unico controllo che il progetto rende esplicito
+   con un file di configurazione (`.clang-format`), uno script (`tools/format.ps1
+   -Check`) e un job dedicato.
+
+   Verificare le cose che trovo interessanti e lasciare le altre alla CI è
+   esattamente il comportamento che la CI serve a rendere impossibile, e stavolta
+   ha funzionato. Ma è costato un giro di push e un commit rosso.
+
+Più un warning, `C4702 codice non eseguibile`: nel finto handler di un test
+avevo messo `FAIL(...)` seguito da `return {}`. Il `return` era irraggiungibile,
+ma il problema vero era un altro — un handler che esce lanciando lascia non
+eseguito tutto il resto del test, comprese le due asserzioni che contano.
+Sostituito con un contatore e l'asserzione spostata nel corpo del test, dove
+dice una cosa più forte: non che il handler non fallisce, ma che non viene
+proprio chiamato.
+
+### Cosa ho imparato
+
+- **Una settimana che non viene committata smette di essere una settimana.** Il
+  commit non è archiviazione, è ciò che rende un pezzo di lavoro separabile dal
+  successivo. Senza, tre giorni dopo l'unica unità che esiste è "tutto".
+- **Il rate limiting appartiene al livello portabile.** `EventCoalescer` prende
+  clock e scheduler iniettati, quindi i test muovono il tempo invece di
+  aspettarlo: nove casi in microsecondi, deterministici, su tre piattaforme.
+  L'alternativa era guardare un numero cambiare su uno schermo Windows e
+  chiamarla verifica.
+- **`kUnavailable` e `kUnknownMethod` non sono lo stesso errore.** "Questa shell
+  è troppo vecchia per te" e "hai chiesto una cosa che non è mai esistita"
+  portano la UI su due rami diversi. Un solo codice per entrambi avrebbe reso la
+  negoziazione impossibile da scrivere correttamente.
+- **Poter spegnere una feature a runtime è un attrezzo di test, non una
+  funzione.** `SONORA_DISABLE_CAPS` esiste perché il ramo degradato venga
+  eseguito su una build di oggi. Un ramo che gira solo contro una shell di sei
+  mesi fa è un ramo che nessuno prova.
+- **Un test che asserisce lanciando nasconde le asserzioni dopo di sé.** Vale
+  anche per il codice di produzione, ed è la ragione per cui `Dispatch` cattura
+  tutto invece di lasciar passare.
+- **La verifica prima di un commit deve coprire tutti i cancelli che il progetto
+  ha, non quelli che mi interessano.** Compilazione, test e tipi li avevo
+  controllati; il formatter no, e la CI l'ha trovato in trenta secondi. Da qui in
+  avanti `clang-format --dry-run --Werror` sta nella stessa lista della build e
+  dei test, prima del trasferimento.
+- **Il nome di un evento sul filo va scritto una volta sola.** `bridge::Events`
+  generata dallo schema toglie la possibilità di sbagliarlo: un evento
+  inesistente è un errore di compilazione, non un messaggio che la pagina non
+  riceve mai.
+
+### Da riprendere
+
+- **L'endpoint di debug remoto (`localhost:9222`) mostra una pagina bianca.**
+  Ipotesi non ancora verificata: il controllo di origine sul WebSocket che
+  Chromium applica dalla 111, che si aggira con `--remote-allow-origins`. Non
+  blocca niente — F12 apre i DevTools incorporati e le righe diagnostiche si
+  leggono nella finestra — ma va chiuso, o cancellata la riga `devtools:` che
+  l'applicazione stampa all'avvio promettendo qualcosa che non funziona.
+- **La sandbox è ancora disattivata** (ADR 0003), da rimettere in settimana 10.
+- **La CI è girata.** Dopo tre settimane di questa riga, il push della settimana
+  4 l'ha finalmente accesa, e la prima cosa che ha fatto è stata trovare un
+  problema vero. Il job `format` era rosso ed è stato sistemato; degli altri —
+  `ui`, e la matrice windows/macos/linux — non ho ancora letto l'esito, e i
+  backend macOS e Linux restano la parte del progetto di cui non ho nessuna
+  prova.

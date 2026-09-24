@@ -45,6 +45,18 @@ class BridgeError : public std::runtime_error {
   ErrorCode code_;
 };
 
+// A capability as the schema declares it. The table itself is generated; this
+// is the shape, here rather than in the generated header so that
+// CapabilityRegistry can be written by hand against it without the two files
+// including each other.
+struct CapabilityInfo {
+  std::string_view name;
+  int version = 0;
+  // A required capability cannot be switched off. Something has to answer
+  // "what do you support?", and it cannot be the thing being negotiated.
+  bool required = false;
+};
+
 // { "method": "shell.echo", "params": { ... } }
 struct Request {
   std::string method;
@@ -116,6 +128,31 @@ template <typename T>
   out.reserve(value.size());
   for (const auto& item : value) {
     out.push_back(ReadScalar<T>(item, field));
+  }
+  return out;
+}
+
+// The same two, for the record types declared under "types" in the schema. T
+// supplies its own FromJson, which the generator wrote from the same
+// description, so the field-level errors inside it read the same as these.
+template <typename T>
+[[nodiscard]] T ReadStruct(const nlohmann::json& value, std::string_view field) {
+  if (!value.is_object()) {
+    throw BridgeError(ErrorCode::kInvalidParams, detail::TypeMismatch(field, "an object"));
+  }
+  return T::FromJson(value);
+}
+
+template <typename T>
+[[nodiscard]] std::vector<T> ReadStructArray(const nlohmann::json& value,
+                                             std::string_view field) {
+  if (!value.is_array()) {
+    throw BridgeError(ErrorCode::kInvalidParams, detail::TypeMismatch(field, "an array"));
+  }
+  std::vector<T> out;
+  out.reserve(value.size());
+  for (const auto& item : value) {
+    out.push_back(ReadStruct<T>(item, field));
   }
   return out;
 }

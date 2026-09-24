@@ -33,6 +33,11 @@ bool StartCef(const RuntimeConfig& config);
 
 void StopCef();
 
+// What this run offers, as one line for the startup log: which capabilities
+// are on, which SONORA_DISABLE_CAPS switched off, and which names in it were
+// not understood. Valid after StartCef.
+[[nodiscard]] std::string CapabilitySummary();
+
 // Native handle of the browser view, or null before it exists.
 [[nodiscard]] void* BrowserViewHandle();
 

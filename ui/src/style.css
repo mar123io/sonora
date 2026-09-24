@@ -4,6 +4,7 @@
   --fg: #e6e6e6;
   --muted: #9aa0a6;
   --ok: #7ee787;
+  --warn: #d29922;
   --bad: #ff7b72;
 }
 
@@ -70,6 +71,13 @@ h1 {
 
 #diagnostics dd[data-state='ok'] {
   color: var(--ok);
+}
+
+#diagnostics dd[data-state='degraded'] {
+  /* Not green and not red: the shell is working and this part of it is not
+     there. A page that painted this red would be reporting a fault that has
+     not happened. */
+  color: var(--warn);
 }
 
 #diagnostics dd[data-state='bad'] {

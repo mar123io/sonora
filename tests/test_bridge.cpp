@@ -1,9 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <iterator>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <bridge_generated.h>
+#include <sonora/bridge/capabilities.h>
 #include <sonora/bridge/protocol.h>
 
 using namespace sonora::bridge;
@@ -50,15 +53,27 @@ class TestHandlers final : public BridgeHandlers {
     return result;
   }
 
-  ShellListCapabilitiesResult ShellListCapabilities(
-      const ShellListCapabilitiesParams&) override {
-    ShellListCapabilitiesResult result;
-    for (const auto& capability : kCapabilities) {
-      result.names.emplace_back(capability.name);
-      result.versions.push_back(capability.version);
+  ShellGetCapabilitiesResult ShellGetCapabilities(const ShellGetCapabilitiesParams&) override {
+    ShellGetCapabilitiesResult result;
+    result.protocolVersion = kProtocolVersion;
+    for (const CapabilityState& state : registry.all()) {
+      Capability capability;
+      capability.name = state.name;
+      capability.version = state.version;
+      capability.enabled = state.enabled;
+      result.capabilities.push_back(std::move(capability));
     }
     return result;
   }
+
+  DiagnosticsGetMetricsResult DiagnosticsGetMetrics(
+      const DiagnosticsGetMetricsParams&) override {
+    DiagnosticsGetMetricsResult result;
+    result.queriesHandled = 7;
+    return result;
+  }
+
+  CapabilityRegistry registry{kCapabilities};
 };
 
 nlohmann::json PayloadOf(const Response& response) {
@@ -69,7 +84,8 @@ nlohmann::json PayloadOf(const Response& response) {
 
 TEST_CASE("a method with no parameters round-trips", "[bridge]") {
   TestHandlers handlers;
-  const Response response = Dispatch(handlers, R"({"method":"shell.getVersion"})");
+  const Response response =
+      Dispatch(handlers, handlers.registry, R"({"method":"shell.getVersion"})");
 
   REQUIRE(response.ok);
   REQUIRE(PayloadOf(response)["version"] == "0.3.0");
@@ -79,7 +95,8 @@ TEST_CASE("a method with no parameters round-trips", "[bridge]") {
 TEST_CASE("parameters reach the handler", "[bridge]") {
   TestHandlers handlers;
   const Response response =
-      Dispatch(handlers, R"({"method":"shell.echo","params":{"message":"ab","repeat":3}})");
+      Dispatch(handlers, handlers.registry,
+               R"({"method":"shell.echo","params":{"message":"ab","repeat":3}})");
 
   REQUIRE(response.ok);
   REQUIRE(PayloadOf(response)["message"] == "ababab");
@@ -88,27 +105,50 @@ TEST_CASE("parameters reach the handler", "[bridge]") {
 
 TEST_CASE("an absent optional parameter takes its default", "[bridge]") {
   TestHandlers handlers;
-  const Response response =
-      Dispatch(handlers, R"({"method":"shell.echo","params":{"message":"x"}})");
+  const Response response = Dispatch(handlers, handlers.registry,
+                                     R"({"method":"shell.echo","params":{"message":"x"}})");
 
   REQUIRE(response.ok);
   REQUIRE(PayloadOf(response)["message"] == "x");
 }
 
-TEST_CASE("arrays survive the round trip", "[bridge]") {
+TEST_CASE("an array of records survives the round trip", "[bridge]") {
+  // Parallel arrays -- names[] and versions[] -- were what this returned
+  // before the generator understood record types. They agree about the order
+  // right up until the day they do not.
   TestHandlers handlers;
-  const Response response = Dispatch(handlers, R"({"method":"shell.listCapabilities"})");
+  const Response response =
+      Dispatch(handlers, handlers.registry, R"({"method":"shell.getCapabilities"})");
 
   REQUIRE(response.ok);
   const auto payload = PayloadOf(response);
-  REQUIRE(payload["names"].size() == 1);
-  REQUIRE(payload["names"][0] == "shell");
-  REQUIRE(payload["versions"][0] == 1);
+  REQUIRE(payload["protocolVersion"] == kProtocolVersion);
+  REQUIRE(payload["capabilities"].size() == std::size(kCapabilities));
+  REQUIRE(payload["capabilities"][0]["name"] == "shell");
+  REQUIRE(payload["capabilities"][0]["enabled"] == true);
+}
+
+TEST_CASE("a record type parses back out of its own JSON", "[bridge]") {
+  const Capability parsed = Capability::FromJson(
+      nlohmann::json::parse(R"({"name":"media","version":3,"enabled":false})"));
+
+  REQUIRE(parsed.name == "media");
+  REQUIRE(parsed.version == 3);
+  REQUIRE_FALSE(parsed.enabled);
+  REQUIRE(parsed.ToJson()["version"] == 3);
+}
+
+TEST_CASE("a record with a field of the wrong type is rejected", "[bridge]") {
+  REQUIRE_THROWS_AS(
+      Capability::FromJson(nlohmann::json::parse(R"({"name":1,"version":3,"enabled":false})")),
+      BridgeError);
+  REQUIRE_THROWS_AS(Capability::FromJson(nlohmann::json::parse(R"({"name":"media"})")),
+                    BridgeError);
 }
 
 TEST_CASE("a request that is not JSON is rejected", "[bridge]") {
   TestHandlers handlers;
-  const Response response = Dispatch(handlers, "{not json at all");
+  const Response response = Dispatch(handlers, handlers.registry, "{not json at all");
 
   REQUIRE_FALSE(response.ok);
   REQUIRE(response.code == ErrorCode::kMalformedRequest);
@@ -116,7 +156,7 @@ TEST_CASE("a request that is not JSON is rejected", "[bridge]") {
 
 TEST_CASE("a request without a method is rejected", "[bridge]") {
   TestHandlers handlers;
-  const Response response = Dispatch(handlers, R"({"params":{}})");
+  const Response response = Dispatch(handlers, handlers.registry, R"({"params":{}})");
 
   REQUIRE_FALSE(response.ok);
   REQUIRE(response.code == ErrorCode::kMalformedRequest);
@@ -124,7 +164,8 @@ TEST_CASE("a request without a method is rejected", "[bridge]") {
 
 TEST_CASE("an unknown method is named in the error", "[bridge]") {
   TestHandlers handlers;
-  const Response response = Dispatch(handlers, R"({"method":"player.play"})");
+  const Response response =
+      Dispatch(handlers, handlers.registry, R"({"method":"player.play"})");
 
   REQUIRE_FALSE(response.ok);
   REQUIRE(response.code == ErrorCode::kUnknownMethod);
@@ -133,7 +174,8 @@ TEST_CASE("an unknown method is named in the error", "[bridge]") {
 
 TEST_CASE("a missing required parameter is rejected", "[bridge]") {
   TestHandlers handlers;
-  const Response response = Dispatch(handlers, R"({"method":"shell.echo","params":{}})");
+  const Response response =
+      Dispatch(handlers, handlers.registry, R"({"method":"shell.echo","params":{}})");
 
   REQUIRE_FALSE(response.ok);
   REQUIRE(response.code == ErrorCode::kInvalidParams);
@@ -142,8 +184,8 @@ TEST_CASE("a missing required parameter is rejected", "[bridge]") {
 
 TEST_CASE("a parameter of the wrong type is rejected", "[bridge]") {
   TestHandlers handlers;
-  const Response response =
-      Dispatch(handlers, R"({"method":"shell.echo","params":{"message":42}})");
+  const Response response = Dispatch(handlers, handlers.registry,
+                                     R"({"method":"shell.echo","params":{"message":42}})");
 
   REQUIRE_FALSE(response.ok);
   REQUIRE(response.code == ErrorCode::kInvalidParams);
@@ -154,7 +196,8 @@ TEST_CASE("a fractional number is not an integer", "[bridge]") {
   // Accepting 1.5 for an int field is how a rounding bug gets in for free.
   TestHandlers handlers;
   const Response response =
-      Dispatch(handlers, R"({"method":"shell.echo","params":{"message":"x","repeat":1.5}})");
+      Dispatch(handlers, handlers.registry,
+               R"({"method":"shell.echo","params":{"message":"x","repeat":1.5}})");
 
   REQUIRE_FALSE(response.ok);
   REQUIRE(response.code == ErrorCode::kInvalidParams);
@@ -163,7 +206,8 @@ TEST_CASE("a fractional number is not an integer", "[bridge]") {
 TEST_CASE("a handler's own validation reaches the caller", "[bridge]") {
   TestHandlers handlers;
   const Response response =
-      Dispatch(handlers, R"({"method":"shell.echo","params":{"message":"x","repeat":9999}})");
+      Dispatch(handlers, handlers.registry,
+               R"({"method":"shell.echo","params":{"message":"x","repeat":9999}})");
 
   REQUIRE_FALSE(response.ok);
   REQUIRE(response.code == ErrorCode::kInvalidParams);
@@ -174,8 +218,8 @@ TEST_CASE("a handler that throws something unexpected does not escape", "[bridge
   // Dispatch is called from a CEF callback, which cannot handle an exception.
   // Anything a handler throws has to stop here.
   TestHandlers handlers;
-  const Response response =
-      Dispatch(handlers, R"({"method":"shell.echo","params":{"message":"boom"}})");
+  const Response response = Dispatch(handlers, handlers.registry,
+                                     R"({"method":"shell.echo","params":{"message":"boom"}})");
 
   REQUIRE_FALSE(response.ok);
   REQUIRE(response.code == ErrorCode::kInternalError);
@@ -183,7 +227,8 @@ TEST_CASE("a handler that throws something unexpected does not escape", "[bridge
 
 TEST_CASE("a failed response names the method it came from", "[bridge]") {
   TestHandlers handlers;
-  const Response response = Dispatch(handlers, R"({"method":"shell.echo","params":{}})");
+  const Response response =
+      Dispatch(handlers, handlers.registry, R"({"method":"shell.echo","params":{}})");
 
   REQUIRE_FALSE(response.ok);
   REQUIRE(response.method == "shell.echo");
