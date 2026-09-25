@@ -6,8 +6,10 @@ add_executable(sonora_tests
   test_bridge.cpp
   test_capabilities.cpp
   test_event_coalescer.cpp
+  test_library.cpp
   test_player.cpp
   test_ring_buffer.cpp
+  test_scanner.cpp
   test_track_stream.cpp)
 
 # stub_handlers.h lives beside the tests, not in a target's include path.
@@ -18,6 +20,7 @@ target_link_libraries(sonora_tests PRIVATE
   sonora::assets
   sonora::audio
   sonora::bridge
+  sonora::library
   Catch2::Catch2WithMain)
 
 include(Catch)
