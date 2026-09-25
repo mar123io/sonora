@@ -624,3 +624,154 @@ Due incidenti, entrambi sul contratto e non sull'audio.
   player girano anche su macOS e Linux.
 - **`localhost:9222` resta bianco** (settimana 4) e **la sandbox resta spenta**
   (ADR 0003, da rimettere in settimana 10).
+
+---
+
+## Settimana 7 — Libreria e UI funzionante
+
+**Pianificata:** 2-8 nov 2026 · **Effettiva:** 25 set 2026
+**Stima:** 10 h · **Effettivo:** ___ h
+**Tag:** `v0.3-player`
+
+### Obiettivo
+
+Puntare Sonora alla cartella Music, indicizzarla senza bloccare la UI, e poter
+cercare e riprodurre qualsiasi brano.
+
+### Fatto
+
+- [x] Indice SQLite con FTS5, `PRAGMA user_version` e migrazione v1 → v2
+- [x] **Nessuna tabella `albums` né `artists`**: sono `GROUP BY` (ADR 0007)
+- [x] Scansione incrementale su mtime+size: una riscansione non legge un tag
+- [x] Tag su un pool piccolo, scritture in transazioni da 256 su un thread solo
+- [x] TagLib dietro un'interfaccia: un solo file del progetto include i suoi header
+- [x] Copertine deduplicate per hash del contenuto, mime **annusato dai byte**
+- [x] `sonora://app/art/<hash>`, immutabile per costruzione e cacheabile per sempre
+- [x] Capability `library`: 8 metodi e l'evento `library.status` coalizzato
+- [x] **`player.enqueue` prende id, non percorsi** — `ValidateTrackPath` cancellata
+- [x] `player.getQueue`, `player.jumpTo`, `queueVersion` nello stato
+- [x] UI: sidebar, lista virtualizzata, ricerca, coda, copertine, barra di riproduzione
+- [x] 46 test libreria+scanner, 34 audio, 46 bridge/core; UI in Chromium headless
+- [x] Build Windows verde, uso a mano verificato sulla cartella Music vera
+
+### Cosa è costato più del previsto
+
+**La libreria, quasi niente. La sera dopo, tutto.** Le due passate di codice
+sono andate come previsto: indice e scanner la prima, bridge e UI la seconda,
+entrambe verificate nel container prima di toccare Windows. Poi l'applicazione è
+partita, e sono usciti cinque problemi in fila — di cui uno solo riguardava il
+codice scritto questa settimana.
+
+1. **Smart App Control ha bloccato l'eseguibile.** `VerifiedAndReputablePolicyState : 1`,
+   evento CodeIntegrity 3077: Windows 11 rifiuta i binari non firmati. Era in
+   modalità valutazione fino alla settimana scorsa ed è passato a enforcement da
+   solo. Non è un bug nostro, è il vincolo di distribuzione vero: **un'app
+   desktop non firmata su Windows 11 oggi non parte.** Un certificato
+   autofirmato non basta — SAC guarda solo certificati di provider attendibili —
+   quindi la firma è la settimana 13 e adesso ha una ragione concreta.
+
+2. **Finestra grigia: DirectComposition sul driver AMD.**
+   `VideoProcessorGetOutputExtension` ritorna 0x80004005, il processo GPU muore,
+   la finestra resta vuota senza un messaggio da nessuna parte. La tentazione
+   era passare `--disable-direct-composition` sempre: sbagliato, è il percorso
+   di presentazione efficiente su Windows e degradare tutte le macchine per un
+   driver è come il software diventa lento una pezza alla volta. Chromium ha già
+   il meccanismo giusto — una blocklist dei driver aggiornata a ogni release — e
+   il motivo onesto per cui serve una manopola è che noi siamo fermi a una build
+   di CEF e quella blocklist non la riceviamo. Quindi
+   `SONORA_CEF_SWITCHES`, letto in `OnBeforeCommandLineProcessing`, stampato
+   all'avvio.
+
+3. **Il pump esterno poteva fermarsi per sempre. Questo era nostro, dalla
+   settimana 2.** Faceva alla lettera quello che dice il contratto di CEF —
+   `OnScheduleMessagePumpWork` arriva, noi pompiamo una volta — e niente di più.
+   Basta che una sveglia si perda e non esiste più nessun percorso di ritorno:
+   CEF aspetta di essere pompato e nessuno lo pompa. Il sintomo è stato la cosa
+   più difficile da leggere di tutto il mese: **la musica continuava, la pagina
+   restava disegnata, e i clic non facevano niente.** Ovvio a posteriori — il
+   thread audio, il processo renderer e il thread UI sono tre cose diverse, e
+   solo uno dei tre era morto.
+
+   Le due mancanze rispetto all'implementazione di riferimento di CEF: nessun
+   timer di riserva e nessuna protezione dalla rientranza. Ora il pump si sveglia
+   da solo ogni 32 ms se nessuno glielo ha chiesto, e una richiesta che arriva
+   mentre è già dentro `CefDoMessageLoopWork` viene ricordata e ripostata.
+
+4. **Un crash in chiusura che c'era dalla settimana 3.**
+   `Check failed: CefCurrentlyOn(TID_UI)` dentro `cef_message_router.cc`:
+   `RemoveHandler` vuole il thread UI, e lo chiamavo dal distruttore di
+   `BridgeRouter`. Ma `SonoraClient` è reference counted da CEF, che molla
+   l'ultimo riferimento **dopo** `CefShutdown` — quel distruttore girava in un
+   processo senza più thread UI. Succedeva a ogni chiusura pulita da un mese,
+   invisibile perché avviene dopo che la finestra è sparita. L'ho trovato
+   leggendo il log di CEF mentre cercavo altro.
+
+5. **La barra mostrava il titolo della traccia precedente.** Un comando del
+   bridge ritorna quando il player è stato avvisato, non quando ha applicato
+   (settimana 6, per scelta), quindi la pagina che subito dopo chiedeva la coda
+   leggeva quella di prima. E niente la correggeva, perché decideva se
+   richiederla guardando dimensione e indice — e sostituire una traccia con
+   un'altra non cambia né l'una né l'altro.
+
+### Cosa ho imparato
+
+- **L'indice è una cache, non il database della musica** (ADR 0007). Da lì
+  discende tutto: il percorso è l'identità, gli album sono un raggruppamento, la
+  scansione è incrementale e riprendibile, e una migrazione può legittimamente
+  essere "butta tutto e riscansiona". Playlist e voti, che *non* si possono
+  ricostruire, non vivranno qui.
+- **Togliere un confine vale più che presidiarlo.** La settimana 6 aveva una
+  funzione che validava il percorso mandato dalla pagina, ammettendo nei propri
+  commenti di non essere un modello di permessi. La settimana 7 non l'ha resa
+  più severa: l'ha cancellata. La pagina manda un id, l'id è una riga dell'indice
+  o non lo è, e non c'è più nessuna stringa del renderer che raggiunge il
+  filesystem.
+- **Se un comando ritorna prima di essere applicato, lo stato deve dire quando è
+  cambiato.** La correzione non è far aspettare la chiamata, è `queueVersion`:
+  un numero che cambia quando cambia la coda. Dimensione e indice sembravano
+  bastare e sono ciechi al caso più comune che esista — riprodurre una traccia e
+  poi un'altra.
+- **Un test che non ho visto fallire non è un test.** Il primo test di regressione
+  sul titolo sbagliato passava anche con il codice rotto: il mio bridge finto
+  applicava `enqueue` all'istante. Reso asincrono come il player vero, è
+  diventato rosso mostrando `Track 1` mentre suonava `Track 2` — e solo allora
+  la correzione ha significato qualcosa.
+- **Un pump che si fida di non perdere mai un messaggio non è un pump, è una
+  scommessa.** La riserva a 32 ms non nasconde il bug: rende irraggiungibile la
+  sua conseguenza. Il peggio che una sveglia persa può costare diventa un frame
+  di ritardo invece del resto della sessione.
+- **Il tipo mime di una copertina si annusa dai byte.** Quello dichiarato nel tag
+  l'ha scritto l'ultimo programma che ha toccato il file, e la risposta viaggia
+  con `X-Content-Type-Options: nosniff`: un tipo sbagliato è un'immagine rotta
+  senza spiegazione. Sono quattro byte da leggere.
+- **Un URL che è l'hash del contenuto è immutabile per costruzione**, quindi la
+  risposta può dirlo (`immutable`, un anno) e il browser non richiede più niente.
+- **Quello che c'è nella casella di ricerca è testo, mai sintassi.** FTS5 ha una
+  grammatica sua, e la prima persona con un apostrofo nel titolo la scopre per
+  te. Ogni parola diventa una frase tra apici, l'ultima con `*`.
+- **Verificare la UI in headless ha pagato due volte:** ha trovato che `hidden`
+  su un elemento con `display: grid` non nasconde niente — teneva aperto un
+  terzo della finestra — e ha riprodotto il bug del titolo sbagliato senza
+  Windows.
+
+### Da riprendere
+
+- **Nessun selettore di cartella.** `--library <percorso>` è il surrogato
+  onesto: una casella di testo nella pagina rimetterebbe un percorso sul bridge,
+  cioè la cosa appena tolta. Serve un dialogo nativo — settimana 8.
+- **Il build non compila la UI.** `cmake --build` incorpora quello che trova in
+  `ui/dist`, e se è vecchia lo scopri a runtime. Almeno un avviso quando `dist`
+  è più vecchia di `src`.
+- **Due istanze condividono lo stesso `library.sqlite`** e il `busy_timeout` è
+  cinque secondi: sarebbe un'attesa muta sul thread UI. Istanza singola, o un
+  errore che dice cosa sta succedendo.
+- **Il pannello diagnostica copre la scritta Volume** nella barra in basso.
+- **Copertine solo dai tag:** niente `folder.jpg`, che è come sono taggate molte
+  librerie vere.
+- **File cloud (OneDrive) mai provati**: leggere un segnaposto scarica il file, e
+  una scansione potrebbe tirarne giù gigabyte senza dirlo.
+- **CI:** la matrice non l'ho ancora letta nemmeno questa settimana. Ora ci
+  girano anche i test di libreria e scanner, che sono portabili.
+- **`localhost:9222` resta bianco** (settimana 4), **la sandbox resta spenta**
+  (ADR 0003, settimana 10), e i **10 minuti continui senza underrun** non li ho
+  ancora misurati (settimana 5).

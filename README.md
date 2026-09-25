@@ -31,11 +31,13 @@ and a versioned bridge between them so the two can ship independently.
 | `--play <file...>` for wav, flac and mp3, with an underrun counter | working |
 | Queue, state machine, seek, volume ramp, **gapless** track change | working |
 | `player` capability on the bridge, transport in the UI | working |
+| SQLite + FTS5 library index, incremental scan, cover art | working |
+| `library` capability, tracks addressed **by id — no path crosses the bridge** | working |
+| Library UI: sidebar, virtualized track list, search, queue | working |
 | Playback state machine, asset store, bridge protocol, capabilities, coalescer, ring buffer, engine — unit tested | working |
 | Platform abstraction, macOS backend | written, compiled in CI, **not tested on hardware** |
 | Platform abstraction, Linux backend | stub; fails with a clear message at runtime |
 
-| Local library, tracks by id rather than by path | week 7 |
 | SMTC, media keys, tray, jump list | weeks 8-9 |
 | MSI packaging, CI matrix | week 10 |
 | Delta updater with signature + rollback | week 11 |
@@ -43,6 +45,26 @@ and a versioned bridge between them so the two can ship independently.
 
 Performance numbers go here in week 12, together with the script that
 reproduces them. Until then this table is the honest version.
+
+**Windows 11 and Smart App Control:** a locally built Sonora is not signed, and
+Smart App Control refuses unsigned binaries outright — the application does not
+start and the message names a policy rather than a fault. There is no developer
+exemption: Microsoft's own guidance for testing with it enabled requires it to be
+in evaluation mode or off. Signed releases are week 13; until then a machine with
+Smart App Control on cannot run a build of this repository.
+
+**Graphics workarounds:** `SONORA_CEF_SWITCHES` passes extra Chromium switches,
+space separated and without their leading dashes, and Sonora prints which ones it
+applied. It exists because Chromium's DirectComposition presenter fails on some
+AMD drivers — the GPU process dies and the window stays blank — and a project
+pinned to one CEF build does not receive Chromium's driver blocklist updates:
+
+```powershell
+$env:SONORA_CEF_SWITCHES = "disable-direct-composition"
+```
+
+`SONORA_TRACE_BRIDGE=1` logs every bridge call before and after it runs; calls
+that hold the UI thread for more than 250 ms say so on their own.
 
 **Known gap:** the CEF sandbox is currently disabled, because `cef_sandbox.lib`
 is published only for the static CRT while everything else in the build uses the
@@ -147,6 +169,22 @@ rates cannot reopen the device between them.
 Ogg Vorbis is not supported. miniaudio carries wav, flac and mp3 with it;
 Vorbis needs a second decoder dropped in alongside, and the `Decoder` interface
 makes that a new file rather than a change to an existing one.
+
+### Indexing a music folder
+
+```powershell
+.\build\win-debug\bin\Debug\Sonora.exe --library "C:\Users\you\Music"
+```
+
+The folder is remembered, so later runs need no flag; every start rescans it,
+which is cheap because the scan compares each file's modification time and size
+against the index and reads the tags of nothing that has not changed. The index
+lives in `%LOCALAPPDATA%\Sonora\library.sqlite` and is a cache: deleting it
+costs one rescan and nothing else ([ADR 0007](docs/adr/0007-the-library-index-is-a-cache.md)).
+
+There is no folder picker yet. A text box in the page would put a filesystem
+path back on the bridge, which is precisely what week 7 removed; it needs a
+native dialog, which is week 8.
 
 ### Working on the UI
 
