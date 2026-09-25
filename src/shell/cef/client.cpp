@@ -97,6 +97,15 @@ void SonoraClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     // fires after this would otherwise reach a frame that no longer exists.
     options_.events->Detach();
   }
+
+  // And the router goes here too, for a sharper version of the same reason.
+  // This client is reference counted by CEF, which lets go of its last
+  // reference after CefShutdown -- so anything destroyed by ~SonoraClient is
+  // destroyed in a process with no UI thread left, and the message router's
+  // RemoveHandler CHECKs for exactly that. Here the browser is going away, CEF
+  // is still up and this is the UI thread, which is every condition it wants.
+  router_.reset();
+
   browser_ = nullptr;
   platform::RequestQuit(0);
 }

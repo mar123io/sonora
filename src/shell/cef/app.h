@@ -17,6 +17,7 @@ namespace sonora::shell {
 
 class EventChannel;
 class ShellMetrics;
+class LibraryHost;
 class SonoraClient;
 class SonoraRenderProcessHandler;
 
@@ -36,6 +37,9 @@ class SonoraApp final : public CefApp, public CefBrowserProcessHandler {
     std::string start_url;
     bool enable_devtools = false;
     const assets::AssetStore* asset_store = nullptr;
+    // Serves cover art alongside the assets, from the same origin. Null on a
+    // build or a run where the index could not be opened.
+    const LibraryHost* library = nullptr;
     bridge::BridgeHandlers* bridge_handlers = nullptr;
     const bridge::CapabilityRegistry* capabilities = nullptr;
     ShellMetrics* metrics = nullptr;
@@ -63,6 +67,8 @@ class SonoraApp final : public CefApp, public CefBrowserProcessHandler {
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override;
   CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override;
   void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override;
+  void OnBeforeCommandLineProcessing(const CefString& process_type,
+                                     CefRefPtr<CefCommandLine> command_line) override;
 
   // CefBrowserProcessHandler
   void OnContextInitialized() override;
