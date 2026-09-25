@@ -1,15 +1,28 @@
 :root {
   color-scheme: dark;
   --bg: #121212;
+  --panel: #181818;
+  --panel-2: #1f1f1f;
+  --line: #2a2a2a;
   --fg: #e6e6e6;
   --muted: #9aa0a6;
+  --accent: #6ea8fe;
   --ok: #7ee787;
   --warn: #d29922;
   --bad: #ff7b72;
+  --row-height: 34px;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* The `hidden` attribute is display:none in the browser's own stylesheet, and
+   any author rule that sets display beats it -- so .library-grid { display: grid }
+   kept an empty grid on screen, holding a third of the window open above the
+   track list. It cost a screenshot to see and one line to fix. */
+[hidden] {
+  display: none !important;
 }
 
 html,
@@ -21,39 +34,501 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
-  /* The window is the chrome; the page must never scroll the whole app. */
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* The window is the chrome; the page must never scroll the whole app. Each
+     pane scrolls on its own, which is also what the virtual list depends on. */
   overflow: hidden;
 }
 
+/* Sidebar | content | queue, with the search bar above the content and the
+   transport across the bottom. Named areas rather than nesting: the layout is
+   the same three columns at every size this window is used at, and a grid says
+   so in one place. */
 #app {
   height: 100%;
-  padding: 48px;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 300px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "sidebar search  queue"
+    "sidebar content queue"
+    "transport transport transport";
+}
+
+#sidebar {
+  grid-area: sidebar;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 16px 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#search {
+  grid-area: search;
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+#content {
+  grid-area: content;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 16px 0;
+}
+
+#queue {
+  grid-area: queue;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  padding: 16px 12px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#transport {
+  grid-area: transport;
+  background: var(--panel-2);
+  border-top: 1px solid var(--line);
+  padding: 10px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+/* ---- controls ---------------------------------------------------------- */
+
+button {
+  font: inherit;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--panel-2);
+  border-color: #3a3a3a;
+}
+
+input[type="search"],
+input[type="text"] {
+  font: inherit;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+/* ---- sidebar ----------------------------------------------------------- */
+
+.library-nav {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  justify-content: center;
-  max-width: 640px;
-  margin: 0 auto;
 }
 
-h1 {
+.library-nav-item {
+  text-align: left;
+  border-color: transparent;
+}
+
+.library-nav-item[data-active="true"] {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--accent);
+}
+
+.library-status {
   margin: 0;
-  font-size: 32px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
-.tagline {
-  margin: 0 0 32px;
+/* ---- headings ---------------------------------------------------------- */
+
+.library-heading {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.library-subheading {
+  margin: 4px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.library-message {
+  margin: 0 0 8px;
+  color: var(--bad);
+  font-size: 12px;
+}
+
+/* ---- the virtual list -------------------------------------------------- */
+
+.library-list {
+  flex: 1;
+  min-height: 0;
+}
+
+.virtual-viewport {
+  overflow-y: auto;
+  position: relative;
+}
+
+/* As tall as every row put together, so the scrollbar is honest even though
+   only the visible rows exist. */
+.virtual-spacer {
+  position: relative;
+  width: 100%;
+}
+
+.virtual-rows {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Moved with a transform rather than `top`: a transform does not invalidate
+     layout, which is what keeps a fast scroll on the compositor. */
+  will-change: transform;
+}
+
+.track-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 3fr) minmax(0, 2fr) minmax(0, 2fr) 56px 32px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: default;
+  user-select: none;
+}
+
+.track-row:hover {
+  background: var(--panel-2);
+}
+
+.track-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-number,
+.track-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.track-time {
+  text-align: right;
+}
+
+.track-artist,
+.track-album {
+  color: var(--muted);
+}
+
+.track-add {
+  opacity: 0;
+  padding: 0 6px;
+}
+
+.track-row:hover .track-add {
+  opacity: 1;
+}
+
+.track-row-pending {
+  color: var(--muted);
+}
+
+/* ---- albums and artists ------------------------------------------------ */
+
+.library-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  padding-bottom: 16px;
+  align-content: start;
+}
+
+.album-card,
+.artist-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 8px;
+  background: var(--panel);
+}
+
+.album-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.album-artist,
+.album-meta {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cover {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--panel-2);
+}
+
+/* A square with the first letter in it, for the many files that carry no
+   artwork at all. Same size as a cover, so a grid of them does not reflow. */
+.cover-empty {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 20px;
+}
+
+.cover-small {
+  width: 44px;
+  height: 44px;
+  flex: none;
+}
+
+.cover-tiny {
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+
+/* ---- queue ------------------------------------------------------------- */
+
+.queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.queue-heading {
+  margin: 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.queue-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.queue-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 44px;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 2px 8px;
+  border-color: transparent;
+  text-align: left;
+  padding: 4px 6px;
+}
+
+.queue-row .cover-tiny {
+  grid-row: span 2;
+}
+
+.queue-row[data-current="true"] {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+.queue-row[data-current="true"] .queue-title {
+  color: var(--accent);
+}
+
+.queue-title,
+.queue-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-artist {
+  color: var(--muted);
+  font-size: 12px;
+  grid-column: 2;
+}
+
+.queue-time {
+  grid-row: span 2;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-empty {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---- transport --------------------------------------------------------- */
+
+.transport-now {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.transport-labels {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.transport-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transport-artist,
+.transport-idle {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transport-middle {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.transport-controls {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.transport-scrubber {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.transport-position {
+  flex: 1;
+  min-width: 0;
+}
+
+.transport-volume-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.transport-volume {
+  width: 100px;
+}
+
+.transport-status,
+.transport-error {
+  margin: 0;
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.transport-error {
+  color: var(--bad);
+}
+
+.unavailable {
+  margin: 0;
+  color: var(--warn);
+  font-size: 12px;
+}
+
+/* ---- diagnostics ------------------------------------------------------- */
+
+#diagnostics-panel {
+  position: fixed;
+  right: 12px;
+  bottom: 96px;
+  max-width: min(560px, calc(100vw - 24px));
+  max-height: 50vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+#diagnostics-panel summary {
+  cursor: pointer;
   color: var(--muted);
 }
 
 #diagnostics {
-  margin: 0;
+  margin: 8px 0 0;
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 8px 24px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -63,118 +538,21 @@ h1 {
 
 #diagnostics dd {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
-#diagnostics dd[data-state='pending'] {
-  color: var(--muted);
-}
-
-#diagnostics dd[data-state='ok'] {
+#diagnostics dd[data-state="ok"] {
   color: var(--ok);
 }
 
-#diagnostics dd[data-state='degraded'] {
-  /* Not green and not red: the shell is working and this part of it is not
-     there. A page that painted this red would be reporting a fault that has
-     not happened. */
-  color: var(--warn);
-}
-
-#diagnostics dd[data-state='bad'] {
+#diagnostics dd[data-state="bad"] {
   color: var(--bad);
 }
 
-/* ---------------------------------------------------------------------------
-   Transport
-   --------------------------------------------------------------------------- */
-
-#transport {
-  margin: 0 0 32px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.transport-status {
-  margin: 0;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.transport-track {
-  margin: 0;
-  /* A path is long and the window is not. Truncating at the front keeps the
-     file name visible, which is the part anyone reads. */
-  direction: rtl;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.transport-scrubber {
-  display: grid;
-  grid-template-columns: max-content 1fr max-content;
-  align-items: center;
-  gap: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
-
-.transport-position,
-.transport-volume {
-  width: 100%;
-  accent-color: var(--ok);
-}
-
-.transport-controls {
-  display: flex;
-  gap: 8px;
-}
-
-.transport-volume-row {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  align-items: center;
-  gap: 12px;
-  color: var(--muted);
-}
-
-.transport-queue {
-  display: grid;
-  grid-template-columns: 1fr max-content;
-  gap: 8px;
-}
-
-#transport button,
-#transport input[type='text'] {
-  background: #1e1e1e;
-  color: var(--fg);
-  border: 1px solid #2f2f2f;
-  border-radius: 6px;
-  padding: 6px 12px;
-  font: inherit;
-}
-
-#transport button {
-  cursor: pointer;
-  min-width: 44px;
-}
-
-#transport button:hover {
-  border-color: #454545;
-}
-
-.transport-error:empty {
-  display: none;
-}
-
-.transport-error {
-  margin: 0;
-  color: var(--bad);
-}
-
-.unavailable {
-  margin: 0;
+#diagnostics dd[data-state="degraded"] {
   color: var(--warn);
+}
+
+#diagnostics dd[data-state="pending"] {
+  color: var(--muted);
 }

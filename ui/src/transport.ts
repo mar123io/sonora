@@ -2,6 +2,8 @@ import { CapabilitySet } from './bridge/capabilities';
 import { onEvent } from './bridge/events';
 import { BridgeError, sonora } from './bridge/invoke';
 import { type PlayerState } from './bridge/generated';
+import { coverElement, element, formatTime } from './format';
+import { type QueueModel } from './queue';
 
 // The transport: the part of the interface that is about sound rather than
 // about the bridge.
@@ -14,16 +16,10 @@ import { type PlayerState } from './bridge/generated';
 // Two values are deliberately not driven by that event while the user is
 // touching them: dragging the position bar or the volume would otherwise fight
 // the incoming state, and the control would jump under the finger.
-
-function formatTime(milliseconds: number): string {
-  if (!Number.isFinite(milliseconds) || milliseconds < 0) {
-    return '--:--';
-  }
-  const total = Math.floor(milliseconds / 1000);
-  const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
+//
+// Week 7 took the file-path box out of here. There is nowhere left to type a
+// path, because there is no longer a bridge method that takes one: the library
+// hands out ids and the queue is built from those.
 
 function describe(error: unknown): string {
   if (error instanceof BridgeError) {
@@ -42,32 +38,28 @@ function button(label: string, title: string, onClick: () => void): HTMLButtonEl
 }
 
 export class Transport {
-  private readonly root: HTMLElement;
-  private readonly status = document.createElement('p');
-  private readonly track = document.createElement('p');
-  private readonly elapsed = document.createElement('span');
-  private readonly remaining = document.createElement('span');
-  private readonly position = document.createElement('input');
-  private readonly volume = document.createElement('input');
-  private readonly path = document.createElement('input');
-  private readonly playPause = document.createElement('button');
-  private readonly error = document.createElement('p');
+  private readonly nowPlaying = element('div', 'transport-now');
+  private readonly status = element('p', 'transport-status');
+  private readonly elapsed = element('span', 'transport-elapsed');
+  private readonly remaining = element('span', 'transport-remaining');
+  private readonly position = element('input', 'transport-position');
+  private readonly volume = element('input', 'transport-volume');
+  private readonly playPause = element('button', 'transport-play');
+  private readonly error = element('p', 'transport-error');
 
   private scrubbing = false;
   private adjustingVolume = false;
   private playing = false;
+  private duration = 0;
 
-  constructor(root: HTMLElement) {
-    this.root = root;
-  }
+  constructor(
+    private readonly root: HTMLElement,
+    private readonly queue: QueueModel,
+  ) {}
 
   /** Draws nothing but an explanation when the shell has no transport. */
   unavailable(reason: string): void {
-    this.root.replaceChildren();
-    const message = document.createElement('p');
-    message.className = 'unavailable';
-    message.textContent = reason;
-    this.root.append(message);
+    this.root.replaceChildren(element('p', 'unavailable', reason));
   }
 
   async mount(capabilities: CapabilitySet): Promise<void> {
@@ -82,6 +74,9 @@ export class Transport {
 
     this.build();
     onEvent('player.state', (payload) => this.render(payload.player));
+    // The title and the cover come from the queue, not from the state event:
+    // the state knows an index, the queue knows what is at it.
+    this.queue.onChange(() => this.renderNowPlaying());
 
     // The first paint does not wait for an event: at four a second the first
     // one is up to 250 ms away, and a transport that appears blank and then
@@ -95,15 +90,10 @@ export class Transport {
   }
 
   private build(): void {
-    this.status.className = 'transport-status';
-    this.track.className = 'transport-track';
-    this.error.className = 'transport-error';
-
     this.position.type = 'range';
     this.position.min = '0';
     this.position.max = '1000';
     this.position.value = '0';
-    this.position.className = 'transport-position';
     this.position.addEventListener('pointerdown', () => {
       this.scrubbing = true;
     });
@@ -113,7 +103,9 @@ export class Transport {
       }
       this.scrubbing = false;
       const fraction = Number(this.position.value) / 1000;
-      void this.call(() => sonora.player.seek({ positionMs: Math.round(fraction * this.duration) }));
+      void this.call(() =>
+        sonora.player.seek({ positionMs: Math.round(fraction * this.duration) }),
+      );
     };
     this.position.addEventListener('pointerup', commitSeek);
     this.position.addEventListener('change', commitSeek);
@@ -122,7 +114,6 @@ export class Transport {
     this.volume.min = '0';
     this.volume.max = '100';
     this.volume.value = '100';
-    this.volume.className = 'transport-volume';
     this.volume.addEventListener('pointerdown', () => {
       this.adjustingVolume = true;
     });
@@ -139,58 +130,43 @@ export class Transport {
       void this.call(() => (this.playing ? sonora.player.pause() : sonora.player.play()));
     });
 
-    this.path.type = 'text';
-    this.path.placeholder = 'C:\\Music\\track.flac';
-    this.path.className = 'transport-path';
-    const enqueue = (): void => {
-      const value = this.path.value.trim();
-      if (value === '') {
-        return;
-      }
-      void this.call(async () => {
-        await sonora.player.enqueue({ path: value });
-        this.path.value = '';
-      });
-    };
-    this.path.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        enqueue();
-      }
-    });
-
-    const controls = document.createElement('div');
-    controls.className = 'transport-controls';
+    const controls = element('div', 'transport-controls');
     controls.append(
-      button('\u23EE', 'Previous', () => void this.call(() => sonora.player.previous())),
+      button('⏮', 'Previous', () => void this.call(() => sonora.player.previous())),
       this.playPause,
-      button('\u23ED', 'Next', () => void this.call(() => sonora.player.next())),
-      button('\u23F9', 'Stop', () => void this.call(() => sonora.player.stop())),
+      button('⏭', 'Next', () => void this.call(() => sonora.player.next())),
+      button('⏹', 'Stop', () => void this.call(() => sonora.player.stop())),
     );
 
-    const scrubber = document.createElement('div');
-    scrubber.className = 'transport-scrubber';
+    const scrubber = element('div', 'transport-scrubber');
     scrubber.append(this.elapsed, this.position, this.remaining);
 
-    const queue = document.createElement('div');
-    queue.className = 'transport-queue';
-    queue.append(this.path, button('Add', 'Add to the queue', enqueue));
-
-    const volumeRow = document.createElement('label');
-    volumeRow.className = 'transport-volume-row';
+    const volumeRow = element('label', 'transport-volume-row');
     volumeRow.append('Volume', this.volume);
 
-    this.root.replaceChildren(
-      this.status,
-      this.track,
-      scrubber,
-      controls,
-      volumeRow,
-      queue,
-      this.error,
-    );
+    const middle = element('div', 'transport-middle');
+    middle.append(controls, scrubber);
+
+    this.root.replaceChildren(this.nowPlaying, middle, volumeRow, this.status, this.error);
+    this.renderNowPlaying();
   }
 
-  private duration = 0;
+  private renderNowPlaying(): void {
+    const entry = this.queue.current;
+    if (entry === undefined) {
+      this.nowPlaying.replaceChildren(element('span', 'transport-idle', 'Nothing playing'));
+      return;
+    }
+    const text = element('div', 'transport-labels');
+    text.append(
+      element('span', 'transport-title', entry.title),
+      element('span', 'transport-artist', entry.artist),
+    );
+    this.nowPlaying.replaceChildren(
+      coverElement(entry.artUrl, entry.title, 'cover cover-small'),
+      text,
+    );
+  }
 
   private render(state: PlayerState): void {
     this.playing = state.state === 'playing';
@@ -199,11 +175,10 @@ export class Transport {
     this.status.textContent =
       state.queueSize === 0
         ? 'Queue empty'
-        : `${state.state} \u00B7 ${state.trackIndex + 1} of ${state.queueSize}` +
-          (state.trackChanges > 0 ? ` \u00B7 ${state.trackChanges} gapless join(s)` : '') +
-          (state.underruns > 0 ? ` \u00B7 ${state.underruns} underrun(s)` : '');
+        : `${state.state} · ${state.trackIndex + 1} of ${state.queueSize}` +
+          (state.trackChanges > 0 ? ` · ${state.trackChanges} gapless join(s)` : '') +
+          (state.underruns > 0 ? ` · ${state.underruns} underrun(s)` : '');
 
-    this.track.textContent = state.currentPath === '' ? '\u2014' : state.currentPath;
     this.playPause.textContent = this.playing ? 'Pause' : 'Play';
 
     this.elapsed.textContent = formatTime(state.positionMs);

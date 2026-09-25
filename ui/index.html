@@ -6,12 +6,20 @@
     <title>Sonora</title>
   </head>
   <body>
-    <main id="app">
-      <h1>Sonora</h1>
-      <p class="tagline">Native shell, web interface.</p>
-      <section id="transport"></section>
+    <div id="app">
+      <aside id="sidebar"></aside>
+      <header id="search"></header>
+      <main id="content"></main>
+      <aside id="queue"></aside>
+      <footer id="transport"></footer>
+    </div>
+    <!-- Week 4's diagnostics page, now a panel that starts closed. Still the
+         fastest way to see whether the bridge, the negotiation and the event
+         coalescing are working, from inside the application. -->
+    <details id="diagnostics-panel">
+      <summary>Bridge diagnostics</summary>
       <dl id="diagnostics"></dl>
-    </main>
+    </details>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

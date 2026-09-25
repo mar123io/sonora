@@ -3,13 +3,17 @@ import './style.css';
 import { CapabilitySet } from './bridge/capabilities';
 import { onEvent } from './bridge/events';
 import { BridgeError, sonora } from './bridge/invoke';
+import { LibraryView } from './library';
+import { QueueModel, QueuePanel } from './queue';
 import { Transport } from './transport';
 
-// Week 4 turns the diagnostics page into the thing it was always going to be:
-// a page that asks the shell what it can do, uses what is there, and says so
-// plainly about what is not. The last two rows are the interesting ones -- one
-// shows a capability that may be switched off, the other shows events arriving
-// at a rate the page never asked for and the shell decided.
+// Week 7 turns the page into a music player: a library on the left, a list in
+// the middle, a queue on the right and the transport along the bottom.
+//
+// The diagnostics that were the whole page in week 4 are still here, in a panel
+// that starts closed. They have not stopped being useful -- they are how the
+// bridge, the capability negotiation and the event coalescing are checked from
+// the inside -- they are just no longer what the window is for.
 
 interface Row {
   readonly label: string;
@@ -188,6 +192,16 @@ function subscribeToHeartbeat(capabilities: CapabilitySet): void {
   });
 }
 
+function root(selector: string): HTMLElement {
+  const found = document.querySelector<HTMLElement>(selector);
+  if (found === null) {
+    // index.html and this file are one artefact, built together. A missing mount
+    // point is a build that is wrong, not a case to handle.
+    throw new Error(`sonora: ${selector} is missing from the page`);
+  }
+  return found;
+}
+
 async function main(): Promise<void> {
   for (const label of LABELS) {
     set(label, 'calling...', 'pending');
@@ -195,12 +209,45 @@ async function main(): Promise<void> {
 
   const capabilities = await negotiate();
 
-  // Mounted before the diagnostics finish: the transport is what the window is
-  // for, and it should not wait behind four calls that are about the bridge.
-  const transportRoot = document.querySelector<HTMLElement>('#transport');
-  if (transportRoot !== null) {
-    void new Transport(transportRoot).mount(capabilities);
-  }
+  // The player first: it is what the window is for, and it should not wait
+  // behind four calls that are about the bridge.
+  const queue = new QueueModel();
+  queue.enable(capabilities);
+
+  const transport = new Transport(root('#transport'), queue);
+  void transport.mount(capabilities);
+  new QueuePanel(root('#queue'), queue).mount(capabilities);
+
+  const library = new LibraryView(
+    { sidebar: root('#sidebar'), content: root('#content'), search: root('#search') },
+    {
+      // Replace and play: picking a track in the library means "play this now",
+      // and one call does both so there is no moment where the queue holds the
+      // new tracks and the player is still on the old one.
+      play: async (trackIds) => {
+        if (trackIds.length === 0) {
+          return;
+        }
+        await sonora.player.enqueue({ trackIds: [...trackIds], replace: true });
+        await sonora.player.play();
+        await queue.refresh();
+      },
+      enqueue: async (trackIds) => {
+        if (trackIds.length === 0) {
+          return;
+        }
+        await sonora.player.enqueue({ trackIds: [...trackIds] });
+        await queue.refresh();
+      },
+    },
+  );
+  void library.mount(capabilities);
+
+  // One subscription, fanned out here rather than three components each asking
+  // the shell for the same thing.
+  onEvent('player.state', (payload) => queue.observe(payload.player));
+  onEvent('library.status', (payload) => library.onStatus(payload.library));
+  void queue.refresh();
 
   await checkVersion();
   await checkRoundTrip();
