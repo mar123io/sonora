@@ -84,6 +84,28 @@ CapabilityRegistry CapabilityRegistry::FromEnvironment(
                             raw == nullptr ? std::string_view{} : std::string_view(raw));
 }
 
+bool CapabilityRegistry::Disable(std::string_view capability, std::string reason) {
+  const auto found = std::find_if(state_.begin(), state_.end(), [&](const CapabilityState& s) {
+    return s.name == capability;
+  });
+  if (found == state_.end() || found->required) {
+    return false;
+  }
+  found->enabled = false;
+  disabled_reasons_.emplace_back(std::string(capability), std::move(reason));
+  return true;
+}
+
+std::string_view CapabilityRegistry::DisabledReason(
+    std::string_view capability) const noexcept {
+  for (const auto& [name, reason] : disabled_reasons_) {
+    if (name == capability) {
+      return reason;
+    }
+  }
+  return {};
+}
+
 bool CapabilityRegistry::IsEnabled(std::string_view capability) const noexcept {
   const auto found = std::find_if(state_.begin(), state_.end(), [&](const CapabilityState& s) {
     return s.name == capability;
@@ -116,6 +138,9 @@ std::string CapabilityRegistry::Summary() const {
   std::string out = "enabled: " + (enabled.empty() ? std::string("none") : enabled);
   if (!disabled.empty()) {
     out += "; disabled: " + disabled;
+  }
+  for (const auto& [name, reason] : disabled_reasons_) {
+    out += "; '" + name + "' off: " + reason;
   }
   for (const std::string& name : refused_) {
     out += "; '" + name + "' cannot be disabled (required)";

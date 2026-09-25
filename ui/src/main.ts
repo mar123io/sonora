@@ -3,6 +3,7 @@ import './style.css';
 import { CapabilitySet } from './bridge/capabilities';
 import { onEvent } from './bridge/events';
 import { BridgeError, sonora } from './bridge/invoke';
+import { Transport } from './transport';
 
 // Week 4 turns the diagnostics page into the thing it was always going to be:
 // a page that asks the shell what it can do, uses what is there, and says so
@@ -193,6 +194,13 @@ async function main(): Promise<void> {
   }
 
   const capabilities = await negotiate();
+
+  // Mounted before the diagnostics finish: the transport is what the window is
+  // for, and it should not wait behind four calls that are about the bridge.
+  const transportRoot = document.querySelector<HTMLElement>('#transport');
+  if (transportRoot !== null) {
+    void new Transport(transportRoot).mount(capabilities);
+  }
 
   await checkVersion();
   await checkRoundTrip();

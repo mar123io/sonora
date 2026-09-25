@@ -1,11 +1,12 @@
 #pragma once
 
 #include <filesystem>
+#include <vector>
 
 namespace sonora::shell {
 
-// `Sonora.exe --play <file>`: decode one file to the default output device,
-// print what happened, exit. No window, no CEF, no bridge.
+// `Sonora.exe --play <file> [more files...]`: play a queue to the default
+// output device, print what happened, exit. No window, no CEF, no bridge.
 //
 // It exists because week 5's question -- does this play a whole album side
 // without a gap -- is not a question about the user interface, and answering it
@@ -13,8 +14,13 @@ namespace sonora::shell {
 // touches the audio engine, the device and nothing else, so when it reports an
 // underrun there is one place the fault can be.
 //
-// Returns a process exit code: 0 when the file played to the end with no
-// underruns, non-zero otherwise, so it can be used from a script.
-[[nodiscard]] int RunPlayCommand(const std::filesystem::path& path);
+// With more than one file it is also how week 6's claim gets checked: N tracks
+// through one device that is never reopened should produce N-1 gapless joins,
+// and the command says how many it actually made.
+//
+// Returns a process exit code: 0 when everything played to the end with no
+// underruns and every join happened, non-zero otherwise, so it can be used
+// from a script.
+[[nodiscard]] int RunPlayCommand(const std::vector<std::filesystem::path>& paths);
 
 }  // namespace sonora::shell

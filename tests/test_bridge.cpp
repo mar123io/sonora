@@ -9,6 +9,8 @@
 #include <sonora/bridge/capabilities.h>
 #include <sonora/bridge/protocol.h>
 
+#include "stub_handlers.h"
+
 using namespace sonora::bridge;
 
 namespace {
@@ -16,7 +18,11 @@ namespace {
 // A stand-in for the real shell. Every test drives the bridge through
 // Dispatch, which is the only surface CEF ever touches -- so these tests cover
 // the same path production does, including the error translation.
-class TestHandlers final : public BridgeHandlers {
+//
+// Derived from StubHandlers rather than from BridgeHandlers: this file is
+// about the envelope, not about the transport, and a method it never calls
+// should not need an empty body here. See tests/stub_handlers.h.
+class TestHandlers final : public sonora::testing::StubHandlers {
  public:
   ShellGetVersionResult ShellGetVersion(const ShellGetVersionParams&) override {
     ShellGetVersionResult result;
@@ -163,13 +169,17 @@ TEST_CASE("a request without a method is rejected", "[bridge]") {
 }
 
 TEST_CASE("an unknown method is named in the error", "[bridge]") {
+  // This used to say "player.play", which was a safe example of a method that
+  // did not exist right up until week 6 implemented it. The name here has to
+  // be one nothing will ever be called, which is a smaller ask than it sounds:
+  // it only has to be ugly.
   TestHandlers handlers;
   const Response response =
-      Dispatch(handlers, handlers.registry, R"({"method":"player.play"})");
+      Dispatch(handlers, handlers.registry, R"({"method":"nothing.likeThis"})");
 
   REQUIRE_FALSE(response.ok);
   REQUIRE(response.code == ErrorCode::kUnknownMethod);
-  REQUIRE(response.message.find("player.play") != std::string::npos);
+  REQUIRE(response.message.find("nothing.likeThis") != std::string::npos);
 }
 
 TEST_CASE("a missing required parameter is rejected", "[bridge]") {

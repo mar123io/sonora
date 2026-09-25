@@ -8,11 +8,11 @@ Sonora is built the way large desktop applications actually are: a native core
 that owns audio and platform integration, a web layer that owns the interface,
 and a versioned bridge between them so the two can ship independently.
 
-> **Status: week 5 of 13.** The shell hosts a Chromium view, serves the UI over
+> **Status: week 6 of 13.** The shell hosts a Chromium view, serves the UI over
 > a custom `sonora://` scheme, and the two talk over a typed, versioned bridge
-> generated from one schema. It also plays audio: `Sonora.exe --play <file>`
-> decodes to the default device through a lock-free ring buffer and reports its
-> own underruns. See [ROADMAP.md](ROADMAP.md) for what lands when.
+> generated from one schema. It also plays music: a queue, a
+> transport in the window, and a gapless join between two tracks performed
+> inside the device callback. See [ROADMAP.md](ROADMAP.md) for what lands when.
 
 ---
 
@@ -28,12 +28,14 @@ and a versioned bridge between them so the two can ship independently.
 | Capability negotiation, `SONORA_DISABLE_CAPS`, degraded UI | working |
 | Push events, coalesced to 4 Hz, generated and typed on both sides | working |
 | Audio engine: decoder → lock-free SPSC ring → device callback | working |
-| `--play <file>` for wav, flac and mp3, with an underrun counter | working |
+| `--play <file...>` for wav, flac and mp3, with an underrun counter | working |
+| Queue, state machine, seek, volume ramp, **gapless** track change | working |
+| `player` capability on the bridge, transport in the UI | working |
 | Playback state machine, asset store, bridge protocol, capabilities, coalescer, ring buffer, engine — unit tested | working |
 | Platform abstraction, macOS backend | written, compiled in CI, **not tested on hardware** |
 | Platform abstraction, Linux backend | stub; fails with a clear message at runtime |
-| Playback state machine on the bridge, seek, gapless | week 6 |
-| Local library + real UI | week 7 |
+
+| Local library, tracks by id rather than by path | week 7 |
 | SMTC, media keys, tray, jump list | weeks 8-9 |
 | MSI packaging, CI matrix | week 10 |
 | Delta updater with signature + rollback | week 11 |

@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <sonora/core/version.h>
 #include <sonora/platform/app_main.h>
@@ -47,11 +48,18 @@ int sonora::platform::AppMain() {
     if (arguments[i] != "--play") {
       continue;
     }
-    if (i + 1 >= arguments.size()) {
-      std::fprintf(stderr, "sonora: --play needs a file path\n");
+    // Everything after --play is a track. More than one is how the gapless
+    // claim gets checked without the interface: N files, N-1 joins, and the
+    // command says how many it made.
+    std::vector<std::filesystem::path> tracks;
+    for (std::size_t track = i + 1; track < arguments.size(); ++track) {
+      tracks.push_back(Utf8Path(arguments[track]));
+    }
+    if (tracks.empty()) {
+      std::fprintf(stderr, "sonora: --play needs at least one file path\n");
       return 2;
     }
-    return sonora::shell::RunPlayCommand(Utf8Path(arguments[i + 1]));
+    return sonora::shell::RunPlayCommand(tracks);
   }
 
   auto asset_store = sonora::assets::MakeDefaultAssetStore();

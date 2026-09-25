@@ -524,3 +524,103 @@ riaprire il device in mezzo.
   una macchina scarica in pochi minuti.
 - **`localhost:9222` resta bianco** (settimana 4) e **la sandbox resta spenta**
   (ADR 0003, da rimettere in settimana 10).
+
+---
+
+## Settimana 6 — State machine, coda, gapless
+
+**Pianificata:** 26 ott - 1 nov 2026 · **Effettiva:** 25 set 2026
+**Stima:** 9 h · **Effettivo:** ___ h
+
+### Obiettivo
+
+Due tracce contigue di un album live passano senza buco udibile, e tutto è
+comandabile dal bridge.
+
+### Fatto
+
+- [x] `AudioEngine` diviso in `TrackStream` (una traccia) e `Player` (coda, stato, volume)
+- [x] **Gapless dentro il callback**: due slot, un indice atomico, il cambio traccia a metà buffer
+- [x] Conversione di formato nel decoder: ogni traccia aperta al formato del device
+- [x] Seek, pausa con dissolvenza, volume con rampa, next/previous con la regola dei 3 secondi
+- [x] 15 test del player contro un device finto in tempo simulato, join verificato campione per campione
+- [x] `--play a.flac b.flac`: N tracce, N-1 join, exit code non-zero se ne manca uno
+- [x] Capability `player` sul bridge: 10 metodi e l'evento `player.state`
+- [x] `CapabilityRegistry::Disable` per una ragione di runtime (niente scheda audio)
+- [x] Trasporto nella UI, che degrada quando la capability non c'è
+- [x] Build Windows verde, `ctest` verde, riproduzione e degradazione verificate a mano
+- [ ] CI verde sulla matrice
+
+### Cosa è costato più del previsto
+
+**Il gapless non è stato il problema.** Il join è uscito giusto al primo colpo,
+e la ragione è che la decisione era stata presa prima di scrivere il codice:
+*il cambio traccia avviene dentro il callback*. Qualunque cosa aspetti — il
+callback successivo, il thread di decodifica, un lock — è il buco che si vuole
+togliere. Da lì discende tutto il resto del threading: due slot, un indice
+atomico che scrive solo il thread del device, e il thread di decodifica che
+scopre il cambio perché quel flag legge diverso.
+
+Due incidenti, entrambi sul contratto e non sull'audio.
+
+1. **L'interfaccia pura virtuale ha fermato la build — dei test.** Aggiunti
+   dieci metodi allo schema, `ShellHandlers` li ha implementati tutti e
+   l'applicazione ha compilato; le due sottoclassi nei test si sono fermate a
+   quattro. È il contratto che funziona, ma con il pubblico sbagliato: un test
+   sulla negoziazione delle capability non ha nessuna opinione su `player.seek`,
+   e costringerlo a scrivere un override vuoto è come un file di test diventa un
+   muro che nessuno legge.
+
+   Separata l'applicazione dai test: `tests/stub_handlers.h` implementa tutto,
+   i test ne derivano e sovrascrivono solo ciò di cui parlano, e i default
+   **lanciano** invece di restituire un risultato vuoto — così un test che
+   raggiunge un metodo che non intendeva raggiungere lo dice, invece di asseriere
+   contro uno zero venuto dal nulla. L'applicazione continua a derivare
+   direttamente da `BridgeHandlers`, quindi la proprietà che conta resta dov'è.
+
+2. **Un test è caduto perché il suo esempio è diventato vero.** "an unknown
+   method is named in the error" usava `player.play` come metodo inesistente:
+   un esempio sicuro fino al giorno in cui la settimana 6 l'ha implementato.
+
+### Cosa ho imparato
+
+- **Un vincolo che vale per tutti diventa boilerplate per chi non riguarda.** La
+  domanda giusta non era "come faccio a non rompere i test", era "chi deve
+  davvero essere obbligato a implementare ogni metodo". Risposta: l'applicazione,
+  non i test.
+- **Un'asserzione campione per campione batte l'ascolto.** La traccia "a" produce
+  i valori 0..999 e la "b" 1000..1999: un join corretto è una rampa ininterrotta,
+  un buco è uno zero, una ripetizione è un numero due volte, un salto è un numero
+  mancante. Con 96 frame per callback il join cade *in mezzo* a un buffer, che è
+  il caso che conta — uno che funziona solo sul confine non è gapless, è
+  fortunato.
+- **La conversione di formato appartiene al decoder.** Aprire ogni traccia al
+  formato del device rende il join una copia invece che una conversione, ed è
+  l'unico modo di non riaprire mai il device. Il resampler che la settimana 5
+  aveva rimandato non è mai stato scritto: esisteva già dentro miniaudio, un
+  parametro più in là.
+- **Un comando ritorna quando il player è stato avvisato, non quando il suono è
+  cambiato.** Sono due momenti diversi, e fingere il contrario vorrebbe dire
+  bloccare una chiamata del bridge sull'audio.
+- **Una ragione di runtime per spegnere una capability riusa il ramo degradato
+  che esiste già.** Niente scheda audio non è un errore fatale: è la stessa
+  strada di `SONORA_DISABLE_CAPS`, e la pagina non ha un secondo ramo da
+  mantenere.
+- **Un esempio di "cosa che non esiste" invecchia.** Vale per i test come per i
+  commenti: se il nome è plausibile, prima o poi qualcuno lo implementa.
+
+### Da riprendere
+
+- **La pagina manda ancora un percorso di file.** `enqueue` accetta un percorso
+  assoluto e rifiuta gli URL, ma non è un modello di permessi e non finge di
+  esserlo: esclude gli errori, non gli attacchi. La settimana 7 elimina il
+  problema invece di presidiarlo — la libreria dà un id a ogni traccia, la pagina
+  manda l'id, e nessun percorso attraversa più il bridge.
+- **La coda si costruisce incollando percorsi a mano.** È l'interfaccia che si
+  merita una settimana senza libreria, e la 7 la sostituisce.
+- **CI:** dopo la settimana 4 il job `format` è tornato verde, ma l'esito della
+  matrice windows/macos/linux non l'ho ancora letto. Ora conterebbe più di prima:
+  `sonora_audio` è portabile, quindi i test del ring buffer, dello stream e del
+  player girano anche su macOS e Linux.
+- **`localhost:9222` resta bianco** (settimana 4) e **la sandbox resta spenta**
+  (ADR 0003, da rimettere in settimana 10).

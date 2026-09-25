@@ -14,6 +14,7 @@ add_library(sonora_cef STATIC
   cef/client.cpp
   cef/event_channel.cpp
   cef/handlers.cpp
+  cef/player_host.cpp
   cef/render_process.cpp
   cef/runtime.cpp
   cef/scheme_handler.cpp

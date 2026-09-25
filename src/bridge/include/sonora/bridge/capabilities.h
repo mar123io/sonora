@@ -3,6 +3,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <sonora/bridge/protocol.h>
@@ -47,6 +48,15 @@ class CapabilityRegistry {
   [[nodiscard]] static CapabilityRegistry FromEnvironment(
       std::span<const CapabilityInfo> declared);
 
+  // Switches a capability off for a reason found at runtime rather than in the
+  // environment -- a machine with no sound card cannot offer a transport, and
+  // saying so through the same mechanism means the page's degraded path is the
+  // one it already has rather than a second one nobody exercises.
+  //
+  // Returns false for a required capability, which stays on, and for a name
+  // that does not exist. Call it before anything can dispatch.
+  bool Disable(std::string_view capability, std::string reason);
+
   [[nodiscard]] bool IsEnabled(std::string_view capability) const noexcept;
 
   // Throws BridgeError(kUnavailable) when the capability is off. Called by the
@@ -63,6 +73,9 @@ class CapabilityRegistry {
   // Names that were asked for and kept anyway, because they are required.
   [[nodiscard]] const std::vector<std::string>& refused() const noexcept { return refused_; }
 
+  // Why a capability was switched off at runtime, empty when it was not.
+  [[nodiscard]] std::string_view DisabledReason(std::string_view capability) const noexcept;
+
   // One line for the startup log: what is on, what is off, what was ignored.
   [[nodiscard]] std::string Summary() const;
 
@@ -70,6 +83,7 @@ class CapabilityRegistry {
   std::vector<CapabilityState> state_;
   std::vector<std::string> unknown_;
   std::vector<std::string> refused_;
+  std::vector<std::pair<std::string, std::string>> disabled_reasons_;
 };
 
 namespace detail {

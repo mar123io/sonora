@@ -83,3 +83,98 @@ h1 {
 #diagnostics dd[data-state='bad'] {
   color: var(--bad);
 }
+
+/* ---------------------------------------------------------------------------
+   Transport
+   --------------------------------------------------------------------------- */
+
+#transport {
+  margin: 0 0 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.transport-status {
+  margin: 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.transport-track {
+  margin: 0;
+  /* A path is long and the window is not. Truncating at the front keeps the
+     file name visible, which is the part anyone reads. */
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transport-scrubber {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content;
+  align-items: center;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.transport-position,
+.transport-volume {
+  width: 100%;
+  accent-color: var(--ok);
+}
+
+.transport-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.transport-volume-row {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.transport-queue {
+  display: grid;
+  grid-template-columns: 1fr max-content;
+  gap: 8px;
+}
+
+#transport button,
+#transport input[type='text'] {
+  background: #1e1e1e;
+  color: var(--fg);
+  border: 1px solid #2f2f2f;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: inherit;
+}
+
+#transport button {
+  cursor: pointer;
+  min-width: 44px;
+}
+
+#transport button:hover {
+  border-color: #454545;
+}
+
+.transport-error:empty {
+  display: none;
+}
+
+.transport-error {
+  margin: 0;
+  color: var(--bad);
+}
+
+.unavailable {
+  margin: 0;
+  color: var(--warn);
+}

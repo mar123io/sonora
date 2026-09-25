@@ -17,9 +17,10 @@ find_path(SONORA_MINIAUDIO_INCLUDE_DIR "miniaudio.h" REQUIRED)
 add_library(sonora_audio STATIC
   src/codecs.cpp
   src/decode_thread.cpp
-  src/engine.cpp
   src/miniaudio_impl.cpp
-  src/ring_buffer.cpp)
+  src/player.cpp
+  src/ring_buffer.cpp
+  src/track_stream.cpp)
 add_library(sonora::audio ALIAS sonora_audio)
 
 target_include_directories(sonora_audio PUBLIC

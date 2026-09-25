@@ -2,13 +2,17 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <thread>
 
 namespace sonora::audio {
 
-class AudioEngine;
-
-// Turns AudioEngine::DecodeStep() into a thread that keeps the ring buffer fed.
+// Runs one step function on a thread of its own, for as long as it is alive.
+//
+// Week 5 hard-wired it to AudioEngine::DecodeStep(); week 6 has two callers --
+// Player::Pump() in the shell and a bare stream in the tests -- so it takes
+// the step instead of the object. Returns true when it did work, which is all
+// this class needs to know to decide whether to come straight back.
 //
 // It polls. That looks lazy next to a condition variable the device callback
 // notifies when it has drained a block, and it is the deliberate choice:
@@ -21,9 +25,12 @@ class AudioEngine;
 // half a second; the poll interval only has to be short next to that.
 class DecodeThread {
  public:
+  // Returns true when the step did something.
+  using Step = std::function<bool()>;
+
   // `idle_sleep` is how long to wait after a step that produced nothing --
-  // either the ring was full or the source has ended.
-  DecodeThread(AudioEngine& engine, std::chrono::milliseconds idle_sleep);
+  // either the buffers were full or the source has ended.
+  DecodeThread(Step step, std::chrono::milliseconds idle_sleep);
   ~DecodeThread();
 
   DecodeThread(const DecodeThread&) = delete;
@@ -36,7 +43,7 @@ class DecodeThread {
  private:
   void Run();
 
-  AudioEngine& engine_;
+  Step step_;
   std::chrono::milliseconds idle_sleep_;
   std::atomic<bool> stop_{false};
   std::thread thread_;

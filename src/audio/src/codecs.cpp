@@ -64,14 +64,17 @@ class FileSource {
 // cannot outlive the other.
 class MiniaudioDecoder final : public Decoder {
  public:
-  MiniaudioDecoder(std::unique_ptr<FileSource> source, const std::filesystem::path& path)
+  MiniaudioDecoder(std::unique_ptr<FileSource> source,
+                   const std::filesystem::path& path,
+                   AudioFormat target)
       : source_(std::move(source)) {
+    // 0 channels and 0 sample rate mean "whatever the file is". A caller that
+    // asks for a target gets miniaudio's own converter in the decode path,
+    // which is where a resampler belongs: on the decode thread, ahead of the
+    // buffer, not in the callback.
     const ma_decoder_config config =
-        // 0 channels and 0 sample rate mean "whatever the file is". Converting
-        // here would hide from the device the one fact it needs in order to
-        // open at the source's own rate, which is how week 5 avoids owning a
-        // resampler.
-        ma_decoder_config_init(ma_format_f32, 0, 0);
+        ma_decoder_config_init(ma_format_f32, static_cast<ma_uint32>(target.channels),
+                               static_cast<ma_uint32>(target.sample_rate_hz));
 
     const ma_result result = ma_decoder_init(&FileSource::OnRead, &FileSource::OnSeek,
                                              source_.get(), &config, &decoder_);
@@ -92,6 +95,12 @@ class MiniaudioDecoder final : public Decoder {
     // Absent for a stream and for some MP3s, in which case the length stays 0
     // and everything downstream has to cope. Reporting a wrong number would be
     // worse than reporting none.
+    //
+    // Costly for MP3: miniaudio's documentation is explicit that finding the
+    // length of an MP3 decodes the whole file, because a VBR stream has no
+    // header that says. It is paid here, on the decode thread, at open time --
+    // never on the device thread. Week 7 stores durations in the library
+    // database and this call stops being the only place that knows.
     ma_uint64 length = 0;
     if (ma_decoder_get_length_in_pcm_frames(&decoder_, &length) == MA_SUCCESS) {
       total_frames_ = length;
@@ -134,12 +143,12 @@ class MiniaudioDecoder final : public Decoder {
 
 }  // namespace
 
-DecoderPtr OpenFileDecoder(const std::filesystem::path& path) {
+DecoderPtr OpenFileDecoder(const std::filesystem::path& path, AudioFormat target) {
   auto source = std::make_unique<FileSource>(path);
   if (!source->is_open()) {
     throw DecoderError("cannot open '" + path.string() + "'");
   }
-  return std::make_unique<MiniaudioDecoder>(std::move(source), path);
+  return std::make_unique<MiniaudioDecoder>(std::move(source), path, target);
 }
 
 std::string SupportedFormats() {

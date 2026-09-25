@@ -23,6 +23,21 @@
   "protocolVersion": 1,
 
   "types": {
+    "PlayerState": {
+      "summary": "Everything the interface needs to draw the transport, in one object.",
+      "fields": [
+        { "name": "state", "type": "string", "summary": "idle, loading, playing, paused or stopped." },
+        { "name": "trackIndex", "type": "int", "summary": "Position in the queue, or -1 when nothing is loaded." },
+        { "name": "queueSize", "type": "int", "summary": "How many tracks are queued." },
+        { "name": "positionMs", "type": "int", "summary": "How far into the current track the listener is." },
+        { "name": "durationMs", "type": "int", "summary": "Length of the current track, 0 when it is not known." },
+        { "name": "volume", "type": "double", "summary": "Linear gain, 0 to 1." },
+        { "name": "currentPath", "type": "string", "summary": "The current track's path, empty when nothing is loaded." },
+        { "name": "underruns", "type": "int", "summary": "Callbacks the decode thread was late for, since startup." },
+        { "name": "trackChanges", "type": "int", "summary": "Gapless joins performed inside a callback." },
+        { "name": "lastError", "type": "string", "summary": "The last track that could not be opened, empty when there was none." }
+      ]
+    },
     "Capability": {
       "summary": "One capability, as the shell currently reports it.",
       "fields": [
@@ -70,6 +85,93 @@
           "result": [
             { "name": "protocolVersion", "type": "int", "summary": "Envelope version the shell speaks." },
             { "name": "capabilities", "type": "Capability", "array": true, "summary": "Every capability the build knows about, enabled or not." }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "player",
+      "version": 1,
+      "summary": "The transport: a queue, a position and the controls over both. Every method is a command that returns once the player has been told, not once the sound has changed -- the state event is what says what actually happened.",
+      "methods": [
+        {
+          "name": "getState",
+          "summary": "The whole transport state. Sent as an event too; this is for the first paint, before any event has arrived.",
+          "params": [],
+          "result": [
+            { "name": "player", "type": "PlayerState", "summary": "The current state." }
+          ]
+        },
+        {
+          "name": "enqueue",
+          "summary": "Adds a file to the end of the queue. The path is an absolute path on this machine; relative paths and anything that looks like a URL are refused.",
+          "params": [
+            { "name": "path", "type": "string", "summary": "Absolute path to an audio file." }
+          ],
+          "result": [
+            { "name": "queueSize", "type": "int", "summary": "How many tracks are queued now." }
+          ]
+        },
+        {
+          "name": "clearQueue",
+          "summary": "Empties the queue and stops.",
+          "params": [],
+          "result": []
+        },
+        {
+          "name": "play",
+          "summary": "Starts, or resumes after a pause. Starting from idle plays the head of the queue.",
+          "params": [],
+          "result": []
+        },
+        {
+          "name": "pause",
+          "summary": "Fades out over about twenty milliseconds and then stops consuming. Instant, and not a click.",
+          "params": [],
+          "result": []
+        },
+        {
+          "name": "stop",
+          "summary": "Lets go of the current track. The queue survives.",
+          "params": [],
+          "result": []
+        },
+        {
+          "name": "next",
+          "summary": "Skips to the next track. Not the same as a gapless join: this one is meant to be heard.",
+          "params": [],
+          "result": []
+        },
+        {
+          "name": "previous",
+          "summary": "Restarts the current track when more than three seconds have played, and goes back one otherwise.",
+          "params": [],
+          "result": []
+        },
+        {
+          "name": "seek",
+          "summary": "Moves to a position in the current track.",
+          "params": [
+            { "name": "positionMs", "type": "int", "summary": "Milliseconds from the start." }
+          ],
+          "result": []
+        },
+        {
+          "name": "setVolume",
+          "summary": "Linear gain, clamped to 0..1, applied as a ramp so it cannot click.",
+          "params": [
+            { "name": "level", "type": "double", "summary": "0 is silence, 1 is unchanged." }
+          ],
+          "result": []
+        }
+      ],
+      "events": [
+        {
+          "name": "state",
+          "coalesce": true,
+          "summary": "The transport moved. Emitted far faster than it is delivered -- the position changes every buffer and a person reads it four times a second -- which is exactly the shape the coalescer was built for in week 4.",
+          "payload": [
+            { "name": "player", "type": "PlayerState", "summary": "The whole state, not a delta: a page that missed an event must not end up with a stale half of one." }
           ]
         }
       ]

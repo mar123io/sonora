@@ -3,6 +3,7 @@
 #include <sonora/platform/app_main.h>
 #include <sonora/platform/event_loop.h>
 
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <utility>
@@ -13,6 +14,7 @@
 #include "cef/client.h"
 #include "cef/event_channel.h"
 #include "cef/handlers.h"
+#include "cef/player_host.h"
 #include "cef/shell_metrics.h"
 #include "cef/timer.h"
 #include "include/cef_app.h"
@@ -28,6 +30,7 @@ CefRefPtr<SonoraApp> g_app;
 std::unique_ptr<bridge::CapabilityRegistry> g_capabilities;
 std::unique_ptr<ShellMetrics> g_metrics;
 std::unique_ptr<EventChannel> g_events;
+std::unique_ptr<PlayerHost> g_player;
 std::unique_ptr<ShellHandlers> g_handlers;
 CefRefPtr<ShellTimer> g_heartbeat;
 bool g_initialized = false;
@@ -113,7 +116,23 @@ bool StartCef(const RuntimeConfig& config) {
       bridge::CapabilityRegistry::FromEnvironment(bridge::kCapabilities));
   g_metrics = std::make_unique<ShellMetrics>();
   g_events = std::make_unique<EventChannel>();
-  g_handlers = std::make_unique<ShellHandlers>(*g_capabilities, *g_metrics, *g_events);
+
+  // The device is opened before CEF, so that by the time the page can ask
+  // whether there is a transport, the answer is already known.
+  //
+  // A machine with no sound card is not a fatal condition: the player
+  // capability is switched off through the same registry the environment
+  // variable uses, and the page takes the degraded path it already has rather
+  // than a second one nobody exercises.
+  g_player = std::make_unique<PlayerHost>();
+  if (g_player->Start()) {
+    std::printf("audio: %s\n", g_player->description().c_str());
+  } else {
+    g_capabilities->Disable("player", "no audio device could be opened");
+  }
+
+  g_handlers =
+      std::make_unique<ShellHandlers>(*g_capabilities, *g_metrics, *g_events, *g_player);
 
   options.bridge_handlers = g_handlers.get();
   options.capabilities = g_capabilities.get();
@@ -135,6 +154,8 @@ bool StartCef(const RuntimeConfig& config) {
     return false;
   }
   g_initialized = true;
+
+  g_player->StartStateEvents(*g_events);
 
   if (g_capabilities->IsEnabled("diagnostics")) {
     // Started before the browser exists on purpose: the channel drops what it
@@ -173,10 +194,16 @@ void StopCef() {
     g_heartbeat->Cancel();
     g_heartbeat = nullptr;
   }
+  // Before CefShutdown: the state timer posts CEF tasks, and the device
+  // callback borrows the player.
+  if (g_player) {
+    g_player->Stop();
+  }
   platform::SetWorkCallback(nullptr);
   g_app = nullptr;
   CefShutdown();
   g_handlers.reset();
+  g_player.reset();
   g_events.reset();
   g_metrics.reset();
   g_capabilities.reset();

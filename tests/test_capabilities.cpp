@@ -6,6 +6,8 @@
 #include <bridge_generated.h>
 #include <sonora/bridge/capabilities.h>
 
+#include "stub_handlers.h"
+
 using namespace sonora::bridge;
 
 namespace {
@@ -135,11 +137,11 @@ TEST_CASE("a disabled capability's methods are unavailable, not unknown",
           "[capabilities][bridge]") {
   // The whole point of the registry: dispatch answers differently, and the
   // difference is the one the UI branches on.
-  struct Handlers final : BridgeHandlers {
+  struct Handlers final : sonora::testing::StubHandlers {
     int diagnostics_calls = 0;
 
-    ShellGetVersionResult ShellGetVersion(const ShellGetVersionParams&) override { return {}; }
-    ShellEchoResult ShellEcho(const ShellEchoParams&) override { return {}; }
+    // Only the two this test is about. Everything else throws if it is
+    // reached, which is what StubHandlers is for.
     ShellGetCapabilitiesResult ShellGetCapabilities(
         const ShellGetCapabilitiesParams&) override {
       return {};
