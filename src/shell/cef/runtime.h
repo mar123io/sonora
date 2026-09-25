@@ -20,6 +20,16 @@ struct RuntimeConfig {
   // Chromium's remote debugging endpoint. 0 disables it entirely.
   int remote_debugging_port = 0;
   const assets::AssetStore* asset_store = nullptr;
+
+  // Where the library index lives. A file, created on first run, safe to delete:
+  // it is a cache of what the folder below contains (ADR 0007).
+  std::filesystem::path library_path;
+  // Folder to index at startup, from --library. Empty leaves the folder alone.
+  std::filesystem::path library_root;
+  // Rescan the remembered folder at startup. Cheap by design -- an unchanged
+  // folder reads no tags at all -- which is what makes it reasonable to do every
+  // time rather than only when asked.
+  bool scan_at_startup = false;
 };
 
 // Entry point of the helper executable: runs one CEF child process (renderer,

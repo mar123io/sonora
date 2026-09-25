@@ -29,6 +29,7 @@
         { "name": "state", "type": "string", "summary": "idle, loading, playing, paused or stopped." },
         { "name": "trackIndex", "type": "int", "summary": "Position in the queue, or -1 when nothing is loaded." },
         { "name": "queueSize", "type": "int", "summary": "How many tracks are queued." },
+        { "name": "queueVersion", "type": "int", "summary": "Increments on every change to the queue's contents. This is what a page watches to know when to ask for the queue again: the size and the index cannot say it, because replacing one track with another changes neither, and a page trusting them draws the old title over the new audio." },
         { "name": "positionMs", "type": "int", "summary": "How far into the current track the listener is." },
         { "name": "durationMs", "type": "int", "summary": "Length of the current track, 0 when it is not known." },
         { "name": "volume", "type": "double", "summary": "Linear gain, 0 to 1." },
@@ -44,6 +45,60 @@
         { "name": "name", "type": "string", "summary": "Capability name, as used in a method's prefix." },
         { "name": "version", "type": "int", "summary": "Version the shell implements." },
         { "name": "enabled", "type": "bool", "summary": "False when this build or this run has it switched off." }
+      ]
+    },
+    "LibraryTrack": {
+      "summary": "One track as the library knows it. Note what is absent: the file's path. The page addresses a track by id and never learns where it lives, which is what removed the 'open whatever this string says' boundary week 6 had to guard by hand.",
+      "fields": [
+        { "name": "id", "type": "int", "summary": "Stable for as long as the file stays where it is. The only way the page refers to a track." },
+        { "name": "title", "type": "string", "summary": "From the tags, or the file name when there is no title tag." },
+        { "name": "artist", "type": "string", "summary": "Track artist." },
+        { "name": "album", "type": "string", "summary": "Album name, empty when untagged." },
+        { "name": "albumArtist", "type": "string", "summary": "Album artist, falling back to the track artist." },
+        { "name": "trackNumber", "type": "int", "summary": "0 when untagged." },
+        { "name": "discNumber", "type": "int", "summary": "0 when untagged." },
+        { "name": "year", "type": "int", "summary": "0 when untagged." },
+        { "name": "durationMs", "type": "int", "summary": "Length in milliseconds, read from the audio properties." },
+        { "name": "artUrl", "type": "string", "summary": "Where to get the cover, or empty when the file has none. Built by the shell so the page never assembles a URL out of a hash." }
+      ]
+    },
+    "LibraryAlbum": {
+      "summary": "A row of the album list. Not a table in the index: a grouping of tracks. See ADR 0007.",
+      "fields": [
+        { "name": "album", "type": "string", "summary": "Album name." },
+        { "name": "albumArtist", "type": "string", "summary": "Album artist, which is what albums are grouped by." },
+        { "name": "year", "type": "int", "summary": "Earliest year among its tracks, 0 when untagged." },
+        { "name": "trackCount", "type": "int", "summary": "How many tracks the index has for it." },
+        { "name": "durationMs", "type": "int", "summary": "Total length." },
+        { "name": "artUrl", "type": "string", "summary": "Cover of any track that has one, empty when none do." }
+      ]
+    },
+    "LibraryStatus": {
+      "summary": "What the library is doing, and what it has. Sent as an event during a scan and available on demand, the same shape both ways -- like PlayerState, and for the same reason.",
+      "fields": [
+        { "name": "root", "type": "string", "summary": "The folder being indexed, empty when none has been chosen yet." },
+        { "name": "trackCount", "type": "int", "summary": "Tracks in the index right now." },
+        { "name": "albumCount", "type": "int", "summary": "Albums in the index right now." },
+        { "name": "artistCount", "type": "int", "summary": "Distinct track artists." },
+        { "name": "scanning", "type": "bool", "summary": "True while a scan is in flight." },
+        { "name": "filesSeen", "type": "int", "summary": "Audio files the current or last scan walked past." },
+        { "name": "filesRead", "type": "int", "summary": "...of which the tags were actually read. Far smaller than filesSeen on a rescan, which is the incremental scan working." },
+        { "name": "added", "type": "int", "summary": "Rows added by the current or last scan." },
+        { "name": "updated", "type": "int", "summary": "Rows updated." },
+        { "name": "removed", "type": "int", "summary": "Rows dropped because the file is gone." },
+        { "name": "failed", "type": "int", "summary": "Files that could not be read. Counted, not fatal." },
+        { "name": "lastError", "type": "string", "summary": "Why the last scan could not start or finish, empty when it could." }
+      ]
+    },
+    "QueueEntry": {
+      "summary": "One entry of the play queue, resolved through the library so the page can draw a title rather than a path.",
+      "fields": [
+        { "name": "index", "type": "int", "summary": "Position in the queue." },
+        { "name": "trackId", "type": "int", "summary": "0 when this entry is not in the library, which happens for a file queued by --play." },
+        { "name": "title", "type": "string", "summary": "Track title, or the file name when the index has never seen this file." },
+        { "name": "artist", "type": "string", "summary": "Track artist, empty when unknown." },
+        { "name": "durationMs", "type": "int", "summary": "Length, 0 when unknown." },
+        { "name": "artUrl", "type": "string", "summary": "Cover, empty when there is none." }
       ]
     }
   },
@@ -91,8 +146,8 @@
     },
     {
       "name": "player",
-      "version": 1,
-      "summary": "The transport: a queue, a position and the controls over both. Every method is a command that returns once the player has been told, not once the sound has changed -- the state event is what says what actually happened.",
+      "version": 2,
+      "summary": "The transport: a queue, a position and the controls over both. Every method is a command that returns once the player has been told, not once the sound has changed -- the state event is what says what actually happened. Version 2 because enqueue changed shape: it takes library ids instead of a file path, which is a break, and a page compiled against version 1 has to be told rather than left to fail one call at a time.",
       "methods": [
         {
           "name": "getState",
@@ -104,12 +159,21 @@
         },
         {
           "name": "enqueue",
-          "summary": "Adds a file to the end of the queue. The path is an absolute path on this machine; relative paths and anything that looks like a URL are refused.",
+          "summary": "Adds library tracks to the queue, in the order given. A list rather than one id because queueing an album is one call, not fifty; and ids rather than paths because a path from the renderer is a boundary somebody has to defend, while an id is either in the index or it is not.",
           "params": [
-            { "name": "path", "type": "string", "summary": "Absolute path to an audio file." }
+            { "name": "trackIds", "type": "int", "array": true, "summary": "Library ids. An id the index does not know is an error, and none of the list is queued." },
+            { "name": "replace", "type": "bool", "optional": true, "summary": "Clears the queue first. Defaults to false." }
           ],
           "result": [
             { "name": "queueSize", "type": "int", "summary": "How many tracks are queued now." }
+          ]
+        },
+        {
+          "name": "getQueue",
+          "summary": "What is in the queue, resolved through the library. Not an event: the queue changes when the page changes it, and player.state already says when its size or position moved -- which is when a page that cares should ask again.",
+          "params": [],
+          "result": [
+            { "name": "entries", "type": "QueueEntry", "array": true, "summary": "In play order." }
           ]
         },
         {
@@ -149,6 +213,14 @@
           "result": []
         },
         {
+          "name": "jumpTo",
+          "summary": "Plays the queue entry at this position. Absolute, unlike next and previous, so it also starts playback when nothing is playing -- which is what clicking a row of the queue has to do. An index the queue does not have is ignored rather than refused: the queue can change between the page drawing a row and somebody clicking it.",
+          "params": [
+            { "name": "index", "type": "int", "summary": "Position in the queue, from 0." }
+          ],
+          "result": []
+        },
+        {
           "name": "seek",
           "summary": "Moves to a position in the current track.",
           "params": [
@@ -172,6 +244,102 @@
           "summary": "The transport moved. Emitted far faster than it is delivered -- the position changes every buffer and a person reads it four times a second -- which is exactly the shape the coalescer was built for in week 4.",
           "payload": [
             { "name": "player", "type": "PlayerState", "summary": "The whole state, not a delta: a page that missed an event must not end up with a stale half of one." }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "library",
+      "version": 1,
+      "summary": "The index of what is on disk. Every method here is a read except scan, and every read is answered from SQLite rather than from the filesystem -- which is what makes a list of fifty thousand tracks a query and not a directory walk.",
+      "methods": [
+        {
+          "name": "getStatus",
+          "summary": "What the library has and whether it is scanning. The first call a page makes into this capability: an empty index and a scan in flight look the same from a track count alone.",
+          "params": [],
+          "result": [
+            { "name": "library", "type": "LibraryStatus", "summary": "The current status." }
+          ]
+        },
+        {
+          "name": "scan",
+          "summary": "Starts a scan and returns immediately -- it does not wait for it, because a scan of a real music folder is minutes and a bridge call must not be. Progress arrives as library.status events. Asking while one is already running is not an error; it says so and changes nothing.",
+          "params": [
+            { "name": "path", "type": "string", "optional": true, "summary": "Folder to index. Absent means the folder already in use, which is how a rescan is asked for." }
+          ],
+          "result": [
+            { "name": "started", "type": "bool", "summary": "False when a scan was already in flight." },
+            { "name": "root", "type": "string", "summary": "The folder being indexed." }
+          ]
+        },
+        {
+          "name": "listTracks",
+          "summary": "A page of every track, in album order. Paged because the page draws a window of rows, not a whole library, and a call that returns fifty thousand records to display forty of them is a call that stutters.",
+          "params": [
+            { "name": "limit", "type": "int", "optional": true, "summary": "How many rows. Defaults to 500, maximum 5000." },
+            { "name": "offset", "type": "int", "optional": true, "summary": "Where to start. Defaults to 0." }
+          ],
+          "result": [
+            { "name": "tracks", "type": "LibraryTrack", "array": true, "summary": "The requested window." },
+            { "name": "total", "type": "int", "summary": "How many there are in all, so the page can size its scrollbar without asking for the rest." }
+          ]
+        },
+        {
+          "name": "listAlbums",
+          "summary": "Every album, ordered by album artist. A grouping, computed on the spot.",
+          "params": [],
+          "result": [
+            { "name": "albums", "type": "LibraryAlbum", "array": true, "summary": "All of them." }
+          ]
+        },
+        {
+          "name": "listArtists",
+          "summary": "Every distinct track artist, in order.",
+          "params": [],
+          "result": [
+            { "name": "artists", "type": "string", "array": true, "summary": "All of them." }
+          ]
+        },
+        {
+          "name": "albumTracks",
+          "summary": "The tracks of one album, in disc and track order. Both parts of the identity are needed: two different artists can have an album called Greatest Hits, and they are not one album.",
+          "params": [
+            { "name": "album", "type": "string", "summary": "Album name, exactly as listAlbums gave it." },
+            { "name": "albumArtist", "type": "string", "summary": "Album artist, exactly as listAlbums gave it." }
+          ],
+          "result": [
+            { "name": "tracks", "type": "LibraryTrack", "array": true, "summary": "In play order." }
+          ]
+        },
+        {
+          "name": "artistTracks",
+          "summary": "Everything by one artist, grouped by album.",
+          "params": [
+            { "name": "artist", "type": "string", "summary": "Artist name, exactly as listArtists gave it." }
+          ],
+          "result": [
+            { "name": "tracks", "type": "LibraryTrack", "array": true, "summary": "In album order." }
+          ]
+        },
+        {
+          "name": "search",
+          "summary": "Full-text search over titles, artists and albums, best match first, with the last word treated as a prefix so the list narrows while somebody is still typing. Whatever is in the box is text: no part of it is syntax, however it is spelled.",
+          "params": [
+            { "name": "query", "type": "string", "summary": "What the person typed. An empty or punctuation-only query returns nothing rather than everything." },
+            { "name": "limit", "type": "int", "optional": true, "summary": "Defaults to 200, maximum 5000." }
+          ],
+          "result": [
+            { "name": "tracks", "type": "LibraryTrack", "array": true, "summary": "Ranked by how well they match." }
+          ]
+        }
+      ],
+      "events": [
+        {
+          "name": "status",
+          "coalesce": true,
+          "summary": "The library changed: a scan started, made progress or finished. Coalesced, because a scan of ten thousand files would otherwise post ten thousand events at a page that can use four a second -- the same producer/consumer mismatch as the transport, handled by the same machinery.",
+          "payload": [
+            { "name": "library", "type": "LibraryStatus", "summary": "The whole status, not a delta." }
           ]
         }
       ]

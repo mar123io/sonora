@@ -108,6 +108,7 @@ bridge::PlayerState PlayerHost::State() const {
   state.state = std::string(core::ToString(snapshot.state));
   state.trackIndex = snapshot.track_index;
   state.queueSize = snapshot.queue_size;
+  state.queueVersion = static_cast<std::int64_t>(snapshot.queue_version);
   state.positionMs = snapshot.position_ms;
   state.durationMs = snapshot.duration_ms;
   state.volume = snapshot.volume;

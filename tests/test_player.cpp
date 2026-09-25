@@ -342,6 +342,73 @@ TEST_CASE("next and previous move through the queue", "[audio][player]") {
   REQUIRE(harness.player().snapshot().position_ms < 1000);
 }
 
+TEST_CASE("the queue version changes when the contents do", "[audio][player]") {
+  // The number the interface watches. It exists because the two numbers a page
+  // would reach for first -- how many tracks are queued, and which one is
+  // playing -- are both blind to the commonest change there is: playing one
+  // track and then playing another. One entry before, one entry after, index 0
+  // both times, completely different music.
+  Harness harness({{"a", {0.0, 2000}}, {"b", {1000.0, 2000}}});
+
+  const std::uint64_t empty = harness.player().snapshot().queue_version;
+
+  harness.player().Enqueue("a");
+  harness.PumpUntilIdle();
+  const std::uint64_t one = harness.player().snapshot().queue_version;
+  REQUIRE(one != empty);
+
+  // Replace: clear then enqueue, which is what player.enqueue with replace does.
+  harness.player().ClearQueue();
+  harness.player().Enqueue("b");
+  harness.PumpUntilIdle();
+  const auto after = harness.player().snapshot();
+
+  REQUIRE(after.queue_size == 1);       // same size...
+  REQUIRE(after.queue_version != one);  // ...and the page can still tell.
+
+  // A command that does not touch the queue leaves it alone: a version that
+  // moved on every event would be a version nobody could use to skip work.
+  harness.player().Play();
+  harness.player().SetVolume(0.5f);
+  harness.PumpUntilIdle();
+  REQUIRE(harness.player().snapshot().queue_version == after.queue_version);
+}
+
+TEST_CASE("a jump plays the track it names, from anywhere", "[audio][player]") {
+  // What clicking a row of the queue does. Unlike next and previous it is
+  // absolute, so it also has to work when nothing is playing -- which is the
+  // state the queue panel is in right after a scan, before anyone has pressed
+  // play.
+  Harness harness({{"a", {0.0, 2000}}, {"b", {1000.0, 2000}}, {"c", {2000.0, 2000}}});
+  harness.player().Enqueue("a");
+  harness.player().Enqueue("b");
+  harness.player().Enqueue("c");
+
+  // From idle, with no Play() first.
+  harness.player().PlayTrack(2);
+  harness.PumpUntilIdle();
+  harness.Render(64);
+  REQUIRE(harness.player().snapshot().state == PlaybackState::kPlaying);
+  REQUIRE(harness.player().snapshot().track_index == 2);
+  REQUIRE(harness.frame(0) == 2000.0f);
+
+  // And backwards, mid-playback.
+  harness.player().PlayTrack(0);
+  harness.PumpUntilIdle();
+  const std::size_t before = harness.rendered_frames();
+  harness.Render(64);
+  REQUIRE(harness.player().snapshot().track_index == 0);
+  REQUIRE(harness.frame(before) == 0.0f);
+
+  // An index the queue does not have is ignored rather than being an error: the
+  // queue can change between the page drawing a row and somebody clicking it.
+  harness.player().PlayTrack(99);
+  harness.player().PlayTrack(-1);
+  harness.PumpUntilIdle();
+  REQUIRE(harness.player().snapshot().track_index == 0);
+  REQUIRE(harness.player().snapshot().state == PlaybackState::kPlaying);
+}
+
 TEST_CASE("next past the end of the queue changes nothing", "[audio][player]") {
   Harness harness({{"a", {0.0, 480'000}}});
   harness.player().Enqueue("a");

@@ -41,14 +41,25 @@ class StubHandlers : public bridge::BridgeHandlers {
 
   SONORA_STUB_METHOD(PlayerGetState)
   SONORA_STUB_METHOD(PlayerEnqueue)
+  SONORA_STUB_METHOD(PlayerGetQueue)
   SONORA_STUB_METHOD(PlayerClearQueue)
   SONORA_STUB_METHOD(PlayerPlay)
   SONORA_STUB_METHOD(PlayerPause)
   SONORA_STUB_METHOD(PlayerStop)
   SONORA_STUB_METHOD(PlayerNext)
   SONORA_STUB_METHOD(PlayerPrevious)
+  SONORA_STUB_METHOD(PlayerJumpTo)
   SONORA_STUB_METHOD(PlayerSeek)
   SONORA_STUB_METHOD(PlayerSetVolume)
+
+  SONORA_STUB_METHOD(LibraryGetStatus)
+  SONORA_STUB_METHOD(LibraryScan)
+  SONORA_STUB_METHOD(LibraryListTracks)
+  SONORA_STUB_METHOD(LibraryListAlbums)
+  SONORA_STUB_METHOD(LibraryListArtists)
+  SONORA_STUB_METHOD(LibraryAlbumTracks)
+  SONORA_STUB_METHOD(LibraryArtistTracks)
+  SONORA_STUB_METHOD(LibrarySearch)
 
   SONORA_STUB_METHOD(DiagnosticsGetMetrics)
 

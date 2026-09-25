@@ -44,7 +44,21 @@ int sonora::platform::AppMain() {
   // happens to live in the same executable: no window, no CEF, no bridge, so
   // an underrun it reports can only have come from the audio path.
   const auto& arguments = CommandLineArguments();
+  std::filesystem::path library_root;
   for (std::size_t i = 0; i < arguments.size(); ++i) {
+    // --library <folder>: index that folder at startup and remember it. There is
+    // no folder picker yet -- that needs a native file dialog, which is week 8
+    // work -- and a command-line flag is the honest stand-in rather than a text
+    // box in the page that would put a path back on the bridge, which is the
+    // thing week 7 just removed.
+    if (arguments[i] == "--library") {
+      if (i + 1 >= arguments.size()) {
+        std::fprintf(stderr, "sonora: --library needs a folder\n");
+        return 2;
+      }
+      library_root = Utf8Path(arguments[i + 1]);
+      continue;
+    }
     if (arguments[i] != "--play") {
       continue;
     }
@@ -87,6 +101,13 @@ int sonora::platform::AppMain() {
   config.enable_devtools = kEnableDevTools;
   config.remote_debugging_port = kEnableDevTools ? kRemoteDebuggingPort : 0;
   config.asset_store = asset_store.get();
+  config.library_path = config.user_data_dir / "library.sqlite";
+  config.library_root = library_root;
+  // Every start rescans whatever folder was last indexed. It is cheap -- the
+  // scan compares each file's timestamp and size against the index and reads
+  // nothing that has not changed -- and it means a library that is edited outside
+  // Sonora is right again by the time the window has finished opening.
+  config.scan_at_startup = true;
 
   if (!sonora::shell::StartCef(config)) {
     std::fprintf(stderr, "sonora: CEF failed to initialise\n");

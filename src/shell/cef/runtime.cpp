@@ -14,6 +14,7 @@
 #include "cef/client.h"
 #include "cef/event_channel.h"
 #include "cef/handlers.h"
+#include "cef/library_host.h"
 #include "cef/player_host.h"
 #include "cef/shell_metrics.h"
 #include "cef/timer.h"
@@ -31,6 +32,7 @@ std::unique_ptr<bridge::CapabilityRegistry> g_capabilities;
 std::unique_ptr<ShellMetrics> g_metrics;
 std::unique_ptr<EventChannel> g_events;
 std::unique_ptr<PlayerHost> g_player;
+std::unique_ptr<LibraryHost> g_library;
 std::unique_ptr<ShellHandlers> g_handlers;
 CefRefPtr<ShellTimer> g_heartbeat;
 bool g_initialized = false;
@@ -131,9 +133,21 @@ bool StartCef(const RuntimeConfig& config) {
     g_capabilities->Disable("player", "no audio device could be opened");
   }
 
-  g_handlers =
-      std::make_unique<ShellHandlers>(*g_capabilities, *g_metrics, *g_events, *g_player);
+  // The index, on the same terms as the device: opened before CEF so the answer
+  // to "is there a library" is known before the page can ask, and switched off
+  // through the same registry when it cannot be opened at all.
+  g_library = std::make_unique<LibraryHost>();
+  if (g_library->Start(config.library_path)) {
+    std::printf("library: %s\n", g_library->description().c_str());
+  } else {
+    g_capabilities->Disable("library", "the library index could not be opened");
+    std::fprintf(stderr, "library: %s\n", g_library->description().c_str());
+  }
 
+  g_handlers = std::make_unique<ShellHandlers>(*g_capabilities, *g_metrics, *g_events,
+                                               *g_player, *g_library);
+
+  options.library = g_library.get();
   options.bridge_handlers = g_handlers.get();
   options.capabilities = g_capabilities.get();
   options.metrics = g_metrics.get();
@@ -156,6 +170,16 @@ bool StartCef(const RuntimeConfig& config) {
   g_initialized = true;
 
   g_player->StartStateEvents(*g_events);
+  g_library->StartStatusEvents(*g_events);
+
+  // A scan asked for on the command line starts here, after the event channel
+  // exists -- otherwise its progress would be posted at a sink that is not there
+  // yet and the first thing the page saw would be a finished scan.
+  if (!config.library_root.empty() || config.scan_at_startup) {
+    if (g_library->StartScan(config.library_root)) {
+      std::printf("library: scanning %s\n", g_library->Status().root.c_str());
+    }
+  }
 
   if (g_capabilities->IsEnabled("diagnostics")) {
     // Started before the browser exists on purpose: the channel drops what it
@@ -199,10 +223,17 @@ void StopCef() {
   if (g_player) {
     g_player->Stop();
   }
+  // Also before CefShutdown, and for the same reason plus one: the scan thread
+  // has to be asked to stop and joined, or closing the window would wait for a
+  // scan of fifty thousand files to finish.
+  if (g_library) {
+    g_library->Stop();
+  }
   platform::SetWorkCallback(nullptr);
   g_app = nullptr;
   CefShutdown();
   g_handlers.reset();
+  g_library.reset();
   g_player.reset();
   g_events.reset();
   g_metrics.reset();

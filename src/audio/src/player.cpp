@@ -22,6 +22,16 @@ using core::PlaybackState;
 // this, and it is the behaviour people expect rather than a preference.
 constexpr std::int64_t kRestartThresholdMs = 3000;
 
+// Not path::string(), which on Windows converts to the system's narrow code page
+// and throws std::filesystem_error on anything it cannot represent -- so a track
+// in D:\Müsik\ would have taken the snapshot down on a machine whose code page
+// is not the right one. u8string always works, and UTF-8 is what everything
+// above this target speaks anyway.
+[[nodiscard]] std::string PathToUtf8(const std::filesystem::path& path) {
+  const std::u8string text = path.u8string();
+  return std::string(text.begin(), text.end());
+}
+
 }  // namespace
 
 Player::Player(Config config) : config_(config) {
@@ -56,11 +66,11 @@ void Player::Post(Command command) {
 }
 
 void Player::Enqueue(std::filesystem::path path) {
-  Post(Command{CommandType::kEnqueue, 0, std::move(path)});
+  Post(Command{.type = CommandType::kEnqueue, .path = std::move(path)});
 }
 
 void Player::ClearQueue() {
-  Post(Command{CommandType::kClearQueue, 0, {}});
+  Post(Command{.type = CommandType::kClearQueue});
 }
 
 void Player::Play() {
@@ -69,7 +79,7 @@ void Player::Play() {
   // open a file. Both are posted so the state machine has one owner, but the
   // bool is also cleared here so a pause/resume never waits for the pump.
   paused_.store(false, std::memory_order_relaxed);
-  Post(Command{CommandType::kPlay, 0, {}});
+  Post(Command{.type = CommandType::kPlay});
 }
 
 void Player::Pause() {
@@ -77,19 +87,24 @@ void Player::Pause() {
 }
 
 void Player::Stop() {
-  Post(Command{CommandType::kStop, 0, {}});
+  Post(Command{.type = CommandType::kStop});
 }
 
 void Player::Next() {
-  Post(Command{CommandType::kNext, 0, {}});
+  Post(Command{.type = CommandType::kNext});
 }
 
 void Player::Previous() {
-  Post(Command{CommandType::kPrevious, 0, {}});
+  Post(Command{.type = CommandType::kPrevious});
+}
+
+void Player::PlayTrack(int index) {
+  Post(Command{.type = CommandType::kJumpTo, .track_index = index});
 }
 
 void Player::SeekMs(std::int64_t position_ms) {
-  Post(Command{CommandType::kSeek, std::max<std::int64_t>(0, position_ms), {}});
+  Post(Command{.type = CommandType::kSeek,
+               .position_ms = std::max<std::int64_t>(0, position_ms)});
 }
 
 void Player::SetVolume(float linear) {
@@ -272,8 +287,11 @@ void Player::RetireSlot(int slot_index) {
 void Player::ApplyCommand(const Command& command) {
   switch (command.type) {
     case CommandType::kEnqueue: {
-      const std::lock_guard<std::mutex> lock(control_mutex_);
-      queue_.push_back(command.path);
+      {
+        const std::lock_guard<std::mutex> lock(control_mutex_);
+        queue_.push_back(command.path);
+      }
+      queue_version_.fetch_add(1, std::memory_order_relaxed);
       break;
     }
 
@@ -284,6 +302,7 @@ void Player::ApplyCommand(const Command& command) {
         const std::lock_guard<std::mutex> lock(control_mutex_);
         queue_.clear();
       }
+      queue_version_.fetch_add(1, std::memory_order_relaxed);
       active_track_index_.store(-1, std::memory_order_relaxed);
       next_track_to_open_ = -1;
       machine_.Reset();
@@ -332,13 +351,18 @@ void Player::ApplyCommand(const Command& command) {
     }
 
     case CommandType::kNext:
-    case CommandType::kPrevious: {
+    case CommandType::kPrevious:
+    case CommandType::kJumpTo: {
       const int current = active_track_index_.load(std::memory_order_relaxed);
-      if (current < 0) {
+      // A jump says which track it wants, so it works from idle and from
+      // stopped; next and previous are relative and mean nothing there.
+      if (current < 0 && command.type != CommandType::kJumpTo) {
         break;
       }
-      int wanted = current;
-      if (command.type == CommandType::kNext) {
+      int wanted = command.track_index;
+      if (command.type == CommandType::kJumpTo) {
+        // Already decided.
+      } else if (command.type == CommandType::kNext) {
         wanted = current + 1;
       } else if (PositionMs() > kRestartThresholdMs) {
         wanted = current;  // restart this one
@@ -353,6 +377,13 @@ void Player::ApplyCommand(const Command& command) {
       }
       if (wanted < 0 || wanted >= static_cast<int>(queue_size)) {
         break;
+      }
+
+      // From idle or stopped, a jump is a load: every state may enter kLoading,
+      // and nothing may go straight from kIdle to kPlaying.
+      if (current < 0) {
+        machine_.TransitionTo(PlaybackState::kLoading);
+        state_.store(machine_.state(), std::memory_order_relaxed);
       }
 
       // A skip is not a gapless join: both slots go, and the wanted track is
@@ -511,11 +542,22 @@ Player::Snapshot Player::snapshot() const {
 
   const std::lock_guard<std::mutex> lock(control_mutex_);
   snapshot.queue_size = static_cast<int>(queue_.size());
+  snapshot.queue_version = queue_version_.load(std::memory_order_relaxed);
   snapshot.last_error = last_error_;
   if (snapshot.track_index >= 0 && snapshot.track_index < snapshot.queue_size) {
-    snapshot.current_path = queue_[static_cast<std::size_t>(snapshot.track_index)].string();
+    snapshot.current_path = PathToUtf8(queue_[static_cast<std::size_t>(snapshot.track_index)]);
   }
   return snapshot;
+}
+
+std::vector<std::string> Player::queue_paths() const {
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  std::vector<std::string> paths;
+  paths.reserve(queue_.size());
+  for (const std::filesystem::path& path : queue_) {
+    paths.push_back(PathToUtf8(path));
+  }
+  return paths;
 }
 
 }  // namespace sonora::audio

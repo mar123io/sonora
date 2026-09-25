@@ -14,6 +14,7 @@ add_library(sonora_cef STATIC
   cef/client.cpp
   cef/event_channel.cpp
   cef/handlers.cpp
+  cef/library_host.cpp
   cef/player_host.cpp
   cef/render_process.cpp
   cef/runtime.cpp
@@ -35,7 +36,9 @@ sonora_target_external_include(sonora_cef PUBLIC "${CEF_ROOT}")
 # ws2_32 and friends) that libcef.dll expects the host to link.
 target_link_libraries(sonora_cef PUBLIC
   sonora::assets
+  sonora::audio
   sonora::bridge
+  sonora::library
   sonora::platform
   sonora::core
   libcef_lib

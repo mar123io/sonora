@@ -64,6 +64,12 @@ class Player {
     core::PlaybackState state = core::PlaybackState::kIdle;
     int track_index = -1;
     int queue_size = 0;
+    // Increments on every change to the queue's *contents*. It exists because
+    // the size and the index cannot stand in for it: replacing a one-track
+    // queue with a different one-track queue leaves both unchanged, and a
+    // listener watching those two numbers would happily go on showing the
+    // previous track's name over the new track's audio.
+    std::uint64_t queue_version = 0;
     std::int64_t position_ms = 0;
     std::int64_t duration_ms = 0;
     float volume = 1.0f;
@@ -93,6 +99,10 @@ class Player {
   void Stop();
   void Next();
   void Previous();
+  // Plays the queue entry at `index`, from wherever the player is now --
+  // including from idle, where it starts playback rather than doing nothing.
+  // Out-of-range is ignored: a queue that changed under a click is not an error.
+  void PlayTrack(int index);
   void SeekMs(std::int64_t position_ms);
   void SetVolume(float linear);
 
@@ -106,15 +116,41 @@ class Player {
   bool Pump();
 
   [[nodiscard]] Snapshot snapshot() const;
+
+  // The queue, in play order, as UTF-8 paths.
+  //
+  // Separate from the snapshot because it is a different size of answer: a
+  // snapshot is read four times a second for the transport, and this is read
+  // when the queue changes. The shell turns these back into library rows so the
+  // page can draw titles -- which is also why they are UTF-8 strings and not
+  // paths: above this line, a path is text.
+  [[nodiscard]] std::vector<std::string> queue_paths() const;
   [[nodiscard]] AudioFormat format() const noexcept { return config_.device_format; }
 
  private:
-  enum class CommandType { kPlay, kStop, kNext, kPrevious, kSeek, kEnqueue, kClearQueue };
+  enum class CommandType {
+    kPlay,
+    kStop,
+    kNext,
+    kPrevious,
+    kJumpTo,
+    kSeek,
+    kEnqueue,
+    kClearQueue
+  };
 
   struct Command {
     CommandType type = CommandType::kPlay;
     std::int64_t position_ms = 0;
-    std::filesystem::path path;
+    // Only kJumpTo uses this. A separate field rather than reusing position_ms
+    // for two unrelated meanings, which is the kind of saving that costs an hour
+    // eighteen months later.
+    int track_index = 0;
+    // Initialised here, like every other member, so that the designated
+    // initialisers at the call sites need not name the fields they do not care
+    // about -- which -Wextra would otherwise call a missing initialiser at every
+    // one of them.
+    std::filesystem::path path{};
   };
 
   // Storage owned by the decode thread. render_slots_ is what the device
@@ -166,6 +202,7 @@ class Player {
   std::atomic<int> active_track_index_{-1};
   std::atomic<core::PlaybackState> state_{core::PlaybackState::kIdle};
   std::atomic<std::uint64_t> frames_rendered_{0};
+  std::atomic<std::uint64_t> queue_version_{0};
   std::atomic<std::uint64_t> underruns_{0};
   std::atomic<std::uint64_t> track_changes_{0};
 };
