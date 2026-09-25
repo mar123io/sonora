@@ -8,10 +8,11 @@ Sonora is built the way large desktop applications actually are: a native core
 that owns audio and platform integration, a web layer that owns the interface,
 and a versioned bridge between them so the two can ship independently.
 
-> **Status: week 4 of 13.** The shell hosts a Chromium view, serves the UI over
+> **Status: week 5 of 13.** The shell hosts a Chromium view, serves the UI over
 > a custom `sonora://` scheme, and the two talk over a typed, versioned bridge
-> generated from one schema — methods in one direction, coalesced events in the
-> other. See [ROADMAP.md](ROADMAP.md) for what lands when.
+> generated from one schema. It also plays audio: `Sonora.exe --play <file>`
+> decodes to the default device through a lock-free ring buffer and reports its
+> own underruns. See [ROADMAP.md](ROADMAP.md) for what lands when.
 
 ---
 
@@ -26,10 +27,12 @@ and a versioned bridge between them so the two can ship independently.
 | Typed native↔web bridge, generated from `schema/bridge.schema.json` | working |
 | Capability negotiation, `SONORA_DISABLE_CAPS`, degraded UI | working |
 | Push events, coalesced to 4 Hz, generated and typed on both sides | working |
-| Playback state machine, asset store, bridge protocol, capabilities, coalescer — unit tested | working |
+| Audio engine: decoder → lock-free SPSC ring → device callback | working |
+| `--play <file>` for wav, flac and mp3, with an underrun counter | working |
+| Playback state machine, asset store, bridge protocol, capabilities, coalescer, ring buffer, engine — unit tested | working |
 | Platform abstraction, macOS backend | written, compiled in CI, **not tested on hardware** |
 | Platform abstraction, Linux backend | stub; fails with a clear message at runtime |
-| Audio engine, gapless playback | weeks 5-6 |
+| Playback state machine on the bridge, seek, gapless | week 6 |
 | Local library + real UI | week 7 |
 | SMTC, media keys, tray, jump list | weeks 8-9 |
 | MSI packaging, CI matrix | week 10 |
@@ -122,6 +125,27 @@ never subscribed to, and `diagnostics.getMetrics` answers with error code 4
 branches on. `shell` is marked required in the schema and refuses to be
 disabled: with `getCapabilities` gone there is nothing left to negotiate with.
 
+### Playing a file
+
+```powershell
+.\build\win-debug\bin\Debug\Sonora.exe --play "C:\Music\track.flac"
+```
+
+No window, no Chromium, no bridge: a different program that happens to share an
+executable. It prints the source format, the device it opened and a running
+underrun count, and exits non-zero if there was even one — so it is usable as a
+check and not only as something to watch.
+
+The device is opened at the **file's** sample rate rather than a fixed 48 kHz.
+Week 5 owns no resampler and the operating system's mixer already has a good
+one, so nothing here has to resample and a 44.1 kHz file does not play sharp.
+Week 6 needs a real one anyway: gapless playback across two files at different
+rates cannot reopen the device between them.
+
+Ogg Vorbis is not supported. miniaudio carries wav, flac and mp3 with it;
+Vorbis needs a second decoder dropped in alongside, and the `Decoder` interface
+makes that a new file rather than a change to an existing one.
+
 ### Working on the UI
 
 Debug builds serve the UI from `ui/dist` on disk, so a UI change is a reload
@@ -159,6 +183,7 @@ finds. Override with `$env:CMAKE_GENERATOR`.
 
 ```
 src/core/        playback state — no OS dependency, no screen, no sound card
+src/audio/       ring buffer, decoders, engine — no OS, no CEF, no device
 src/assets/      the web bundle as bytes: embedded table + the two stores that serve it
 src/bridge/      the native<->web protocol: envelope, errors, generated dispatch — no CEF
 src/platform/    iface/ + win/ + mac/ + linux/ — the only place #ifdef on the OS is allowed
@@ -183,6 +208,10 @@ Three decisions shape the rest:
 - [ADR 0004](docs/adr/0004-the-bridge-is-generated-from-a-schema.md) — the
   bridge is generated from one schema, and the generated handler interface is
   pure virtual, so the two ends cannot drift without breaking the build.
+- [ADR 0006](docs/adr/0006-the-audio-callback-is-real-time.md) — the device
+  callback allocates nothing, locks nothing and logs nothing, which is the exact
+  opposite of the bridge's policy and deliberately so: each belongs to the
+  thread it was written for.
 - [ADR 0005](docs/adr/0005-events-are-pushed-and-coalesced.md) — events are
   pushed by the shell rather than carried on a persistent query, and the rate
   limiting that decides what the page sees lives in the portable target where it

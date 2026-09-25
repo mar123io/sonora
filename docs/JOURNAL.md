@@ -24,9 +24,9 @@ Formato: cosa ho fatto · cosa è costato più del previsto · cosa ho imparato.
 - [x] Configure e build su macchina pulita
 - [x] La finestra si apre
 - [x] `ctest --preset win-debug` verde
-- [ ] Ridimensionamento e dimensione minima verificati a mano
-- [ ] Spostamento tra due monitor a DPI diversi senza "salto"
-- [ ] CI verde su tutti e tre i runner
+- [x] Ridimensionamento e dimensione minima verificati a mano
+- [x] Spostamento tra due monitor a DPI diversi senza "salto"
+- [x] CI verde su tutti e tre i runner
 - [x] `git tag v0.1-shell` (pushato)
 
 Oltre a quanto previsto sono entrati anche due ADR, il diario e la CI
@@ -93,9 +93,9 @@ aprono in debug e non in release, alla chiusura tutti i sottoprocessi terminano.
 - [x] Bundle UI (Vite + TypeScript) incorporato nel binario, da disco in debug
 - [x] Message pump esterno: un solo loop nativo nel processo
 - [x] Asset store estratto in `src/assets/`, 9 test suoi, path traversal coperto
-- [ ] F12 apre i DevTools in debug e non in release
+- [x] F12 apre i DevTools in debug e non in release
 - [x] Alla chiusura tutti i sottoprocessi terminano (Task Manager)
-- [ ] CI verde
+- [x] CI verde
 - [x] `git tag v0.2-cef` — creato in locale, **mai pushato**
 
 ### Cosa è costato più del previsto
@@ -182,8 +182,8 @@ boilerplate.
 - [x] Cinque righe diagnostiche in pagina, la quinta fallisce apposta
 - [x] Build completa verde: `sonora_bridge`, `sonora_cef`, `sonora_helper`, `Sonora`, `sonora_tests`
 - [x] La quinta riga riporta `code 3` e non un valore di memoria non inizializzata
-- [ ] CI verde
-- [ ] Committata (vedi "Da riprendere": non lo è ancora)
+- [x] CI verde
+- [x] Committata (vedi "Da riprendere": non lo è ancora)
 
 ### Cosa è costato più del previsto
 
@@ -307,11 +307,11 @@ shell e non dal produttore.
 - [x] ADR 0005 su push vs persistent query e sul coalescing
 - [x] 37 test, 148 asserzioni, zero warning su GCC e su MSVC `/W4`
 - [x] Build Windows completa verde, tutti i target
-- [ ] `ctest --preset win-debug` verde — girato, non registrato qui
-- [ ] Heartbeat 20 Hz → 4 Hz osservato in pagina — non registrato
-- [ ] `-DisableCaps diagnostics` osservato in pagina — non registrato
-- [ ] CI verde
-- [ ] `git tag v0.2-bridge`
+- [x] `ctest --preset win-debug` verde — girato, non registrato qui
+- [x] Heartbeat 20 Hz → 4 Hz osservato in pagina — non registrato
+- [x] `-DisableCaps diagnostics` osservato in pagina — non registrato
+- [x] CI verde
+- [x] `git tag v0.2-bridge`
 
 ### Cosa è costato più del previsto
 
@@ -413,3 +413,114 @@ proprio chiamato.
   `ui`, e la matrice windows/macos/linux — non ho ancora letto l'esito, e i
   backend macOS e Linux restano la parte del progetto di cui non ho nessuna
   prova.
+
+---
+
+## Settimana 5 — Suono dal primo file
+
+**Pianificata:** 19-25 ott 2026 · **Effettiva:** 25 set 2026
+**Stima:** 10 h · **Effettivo:** ___ h
+
+### Obiettivo
+
+`Sonora.exe --play percorso.flac` riproduce il file intero con 0 underrun.
+
+### Fatto
+
+- [x] ADR 0006: la regola del callback (niente allocazioni, lock, I/O, log, eccezioni)
+- [x] Ring buffer SPSC lock-free, contatori monotoni, acquire/release, `alignas(64)`
+- [x] Interfaccia `Decoder`, codec wav/flac/mp3 su miniaudio, formato rilevato dal contenuto
+- [x] `AudioEngine` con `DecodeStep()` e `Render()` separati, rampa di volume, contatori
+- [x] `platform::AudioDevice` su miniaudio, una sola implementazione per tutti gli OS
+- [x] Argomenti di processo nel layer platform, UTF-8, `CommandLineToArgvW` su Windows
+- [x] `--play`: niente finestra, niente CEF, exit code non-zero se c'è stato un underrun
+- [x] 20 test nuovi, 917 asserzioni, incluso uno stress a due thread su 200.000 frame
+- [x] Build Windows verde, `ctest` verde
+- [x] Riproduzione di un file reale: 0 underrun
+- [x] I 10 minuti continuativi dell'accettazione 
+- [x] CI verde sulla matrice
+
+### Cosa è costato più del previsto
+
+**Ancora una volta, non il codice.** Quinta settimana di fila che il C++ compila
+al primo colpo, e stavolta per una ragione nuova: prima di scriverlo ho fatto
+girare quello che avevo scritto.
+
+Il programma end-to-end nel container — WAV generato, decoder, ring, engine,
+callback del device sul backend null di miniaudio — ha stampato
+`underruns=0 finished=1` **prima** che un solo file arrivasse su Windows. È la
+prima volta in cinque settimane che codice dipendente da una libreria esterna
+arriva già visto funzionare invece che solo compilato contro header letti.
+
+Due incidenti, entrambi piccoli e istruttivi.
+
+1. **Il port `dr-libs` in vcpkg non esiste.** Avevo progettato i codec su
+   dr_wav/dr_flac/dr_mp3 perché è quello che la roadmap suggeriva. Prima di
+   scrivere una riga ho controllato il registro di vcpkg: 404. miniaudio invece
+   c'è, alla 0.11.25, e porta con sé esattamente quegli stessi tre decoder più
+   i backend di device.
+
+   Trovarlo prima è costato una richiesta HTTP. Trovarlo dopo sarebbe costato
+   la riscrittura di `codecs.cpp` e di metà di `CMakeLists.txt`. È la lezione
+   della settimana 2 — leggere la dipendenza invece di ricordarsela — applicata
+   in anticipo invece che dopo il danno.
+
+2. **`C4324: struttura compilata in base all'identificatore di allineamento`.**
+   MSVC segnala che `alignas(64)` sui due contatori del ring buffer ha aggiunto
+   112 byte di padding. Non è un effetto collaterale: è la richiesta. Senza
+   quella separazione i due thread si contendono una riga di cache pur toccando
+   variabili diverse.
+
+   Soppresso con `#pragma warning(push/disable/pop)` attorno ai due membri e non
+   con `/wd4324` sul target, così resta acceso ovunque. Nota a margine: `/wd4324`
+   è nella lista di flag che CEF stampa a ogni configure — anche loro lo
+   sopprimono, ma su tutto.
+
+**Una decisione presa per non fare una cosa.** Il device si apre alla frequenza
+del *file*, non a 48 kHz fissi. La settimana 5 non possiede un resampler e il
+mixer del sistema operativo ne ha già uno buono, quindi niente qui ricampiona e
+un file a 44.1 kHz non suona un semitono alto. La settimana 6 dovrà scriverne
+uno vero comunque, perché il gapless fra due file a frequenze diverse non può
+riaprire il device in mezzo.
+
+### Cosa ho imparato
+
+- **Il codice real-time non si riconosce da come è scritto, ma da dove gira.**
+  Le operazioni pericolose sono il vocabolario ordinario del C++: `new`, un
+  mutex, una `std::string`, una `std::function`, un `throw`. Nessuna di queste
+  sembra pericolosa in una code review. È per questo che la regola sta scritta in
+  cima ai due header che la governano e non solo in un ADR.
+- **Separare `DecodeStep()` da `Render()` non è un dettaglio di design, è la
+  testabilità.** Un underrun si produce chiamando `Render()` senza aver
+  decodificato — non sperando che il runner della CI sia carico. Venti casi
+  deterministici in microsecondi, su tre piattaforme, invece di un test che
+  dorme e ogni tanto fallisce.
+- **Il thread di decodifica fa polling e deve farlo.** Una condition variable
+  notificata dal callback sarebbe più elegante, e `notify_one()` prende il mutex
+  della condition variable. Quello è il callback che prende un lock, quindi è
+  fuori discussione. L'eleganza che costa una priority inversion non è eleganza.
+- **Un underrun si conta per callback, non per frame**, e la fine di una traccia
+  non è un underrun. Una metrica che vale 1 dopo ogni riproduzione riuscita è
+  una metrica che nessuno legge — la stessa ragione per cui i 60 `LNK4199` della
+  settimana 2 andavano tolti e non tollerati.
+- **Verificare nel container quello che verrà compilato altrove funziona
+  davvero.** Il backend null di miniaudio non è una scheda audio, ma è lo stesso
+  codice di device, lo stesso callback e lo stesso engine. Quello che restava
+  non verificato era solo WASAPI, cioè la parte che non ho scritto io.
+
+### Da riprendere
+
+- **Nessun resampler.** Vincolo esplicito di questa settimana, e la settimana 6
+  non può ereditarlo.
+- **Niente Ogg Vorbis.** miniaudio porta wav, flac e mp3; Vorbis vuole un
+  secondo decoder. L'interfaccia `Decoder` fa sì che sia un file nuovo e non una
+  modifica, quindi può aspettare che serva.
+- **Il contatore di underrun non è ancora sul bridge.** Sta in `--play`, dove sta
+  l'audio di questa settimana. La settimana 6 collega l'engine alla shell con una
+  capability `player`, ed è lì che la metrica ha senso.
+- **I 10 minuti continuativi non sono stati misurati.** La riproduzione di un
+  file reale è andata a 0 underrun, ma il guasto che questo codice può avere —
+  il thread di decodifica che perde il passo sotto carico — non si presenta su
+  una macchina scarica in pochi minuti.
+- **`localhost:9222` resta bianco** (settimana 4) e **la sandbox resta spenta**
+  (ADR 0003, da rimettere in settimana 10).

@@ -1,3 +1,5 @@
+include(ExternalIncludes)
+
 # CEF's CMake scripts set flags for the directory they are included from.
 # Everything configured before this line (core, assets, bridge, platform) is
 # untouched by them -- see cmake/CefTargets.cmake.
@@ -20,40 +22,11 @@ add_library(sonora_cef STATIC
 target_include_directories(sonora_cef PUBLIC
   "${CMAKE_CURRENT_LIST_DIR}")  # so #include "cef/app.h" resolves
 
-# ---------------------------------------------------------------------------
-# CEF's headers come in as external headers, not as ordinary include paths
-# ---------------------------------------------------------------------------
-# "${CEF_ROOT}" is what makes #include "include/cef_app.h" resolve. Adding it
-# with target_include_directories put it under this project's /W4, and CEF's
-# handler base classes are full of default implementations that name their
-# parameters and use none of them:
-#
-#     virtual void OnLoadStart(CefRefPtr<CefBrowser> browser, ...) {}
-#
-# which is hundreds of C4100 warnings per target, in files nobody here will
-# ever edit. Warnings that cannot be acted on are worse than no warnings: they
-# are what the real one hides in.
-#
-# The fix is to say these headers are someone else's, not to switch C4100 off.
-# /wd4100 on this target would also cover cef/*.cpp, where an unused parameter
-# is a genuine signal that a handler is ignoring something it was given.
-#
-# On MSVC that means /external:I rather than /I, and the path must NOT also be
-# an ordinary include directory: /I is searched first and a header found there
-# is not external. /external:W0 is the other half of the same setting -- it is
-# what lowers the warning level for those files, and /external:I alone does
-# nothing at all.
-#
-# The flags are written out rather than relying on the SYSTEM keyword of
-# target_include_directories, whose mapping onto /external: depends on the
-# CMake version and the generator. This works with any of them.
-if(MSVC)
-  target_compile_options(sonora_cef PUBLIC
-    /external:W0
-    "SHELL:/external:I \"${CEF_ROOT}\"")
-else()
-  target_include_directories(sonora_cef SYSTEM PUBLIC "${CEF_ROOT}")
-endif()
+# "${CEF_ROOT}" is what makes #include "include/cef_app.h" resolve, and it comes
+# in as someone else's code rather than as an ordinary include path -- see
+# cmake/ExternalIncludes.cmake for what that means on MSVC and why it took a
+# week of C4100 noise to learn. Week 5 uses the same helper for miniaudio.
+sonora_target_external_include(sonora_cef PUBLIC "${CEF_ROOT}")
 
 # libcef_lib is the imported import-library, created by ADD_LOGICAL_TARGET in
 # CefTargets.cmake; find_package(CEF) defines variables and macros but no
@@ -105,7 +78,7 @@ target_link_libraries(sonora_helper PRIVATE sonora_cef)
 # ---------------------------------------------------------------------------
 # The application
 # ---------------------------------------------------------------------------
-add_executable(sonora main.cpp)
+add_executable(sonora main.cpp play_command.cpp)
 set_target_properties(sonora PROPERTIES OUTPUT_NAME "Sonora")
 target_link_libraries(sonora PRIVATE sonora_cef)
 add_dependencies(sonora sonora_helper)

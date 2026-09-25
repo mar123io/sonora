@@ -1,5 +1,7 @@
 #include <cstdio>
+#include <filesystem>
 #include <memory>
+#include <string>
 
 #include <sonora/core/version.h>
 #include <sonora/platform/app_main.h>
@@ -10,6 +12,7 @@
 
 #include <sonora/assets/asset_store.h>
 #include "cef/runtime.h"
+#include "play_command.h"
 
 namespace {
 
@@ -23,10 +26,33 @@ constexpr bool kEnableDevTools = true;
 constexpr bool kEnableDevTools = false;
 #endif
 
+// The arguments arrive as UTF-8 (see platform/app_main.h). Constructing a
+// std::filesystem::path from a narrow string on Windows would reinterpret it in
+// the system's ANSI code page, which is the bug the conversion in the platform
+// layer exists to avoid -- undoing it here would be quietly throwing that away.
+std::filesystem::path Utf8Path(const std::string& utf8) {
+  return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
+}
+
 }  // namespace
 
 int sonora::platform::AppMain() {
   std::printf("Sonora %s (%s)\n", sonora::core::kVersion, sonora::core::kGitDescribe);
+
+  // Checked before anything else is built. --play is a different program that
+  // happens to live in the same executable: no window, no CEF, no bridge, so
+  // an underrun it reports can only have come from the audio path.
+  const auto& arguments = CommandLineArguments();
+  for (std::size_t i = 0; i < arguments.size(); ++i) {
+    if (arguments[i] != "--play") {
+      continue;
+    }
+    if (i + 1 >= arguments.size()) {
+      std::fprintf(stderr, "sonora: --play needs a file path\n");
+      return 2;
+    }
+    return sonora::shell::RunPlayCommand(Utf8Path(arguments[i + 1]));
+  }
 
   auto asset_store = sonora::assets::MakeDefaultAssetStore();
   std::printf("assets: %s\n", asset_store->Describe().c_str());
