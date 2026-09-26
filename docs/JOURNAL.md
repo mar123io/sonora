@@ -775,3 +775,153 @@ codice scritto questa settimana.
 - **`localhost:9222` resta bianco** (settimana 4), **la sandbox resta spenta**
   (ADR 0003, settimana 10), e i **10 minuti continui senza underrun** non li ho
   ancora misurati (settimana 5).
+
+---
+
+## Settimana 8 — Media integration Windows
+
+**Pianificata:** 9-15 nov 2026 · **Effettiva:** 26 set 2026
+**Stima:** 10 h · **Effettivo:** ___ h
+**Tag:** nessuno — `v0.4-native` chiude la settimana 9
+
+### Obiettivo
+
+Far esistere Sonora per il sistema operativo: pannello multimediale di Windows
+con titolo, artista e copertina, tasti media della tastiera funzionanti con la
+finestra minimizzata, e un backend macOS che almeno compila.
+
+### Fatto
+
+- [x] `MediaIntegration` in `platform/iface/`: metadati, stato, timeline, comandi in ingresso
+- [x] `MediaSessionPolicy` in `core/`: **portabile, con clock iniettato, 10 casi di test**
+- [x] Backend Windows in C++/WinRT: `SystemMediaTransportControls` via
+      `ISystemMediaTransportControlsInterop::GetForWindow`
+- [x] Comandi in ingresso: play, pause, toggle, stop, next, previous, seek
+- [x] Tasti media hardware con la finestra minimizzata — il criterio della settimana
+- [x] Copertina nel pannello: byte dall'indice → `InMemoryRandomAccessStream`,
+      applicata in `fire_and_forget` con un contatore di generazione
+- [x] Stub macOS (`MPNowPlayingInfoCenter` + `MPRemoteCommandCenter`) e stub Linux
+- [x] Icona disegnata da `tools/make_icon.py`, nove dimensioni, ognuna disegnata
+- [x] `sonora.rc` generato da CMake: manifest, icona, `STRINGTABLE`, `VS_VERSION_INFO`
+      con la versione del `project()` — un solo numero in tutto il repo
+- [x] Proprietà di relaunch sulla finestra (`PKEY_AppUserModel_Relaunch*`)
+
+### Cosa è costato più del previsto
+
+**Il pannello funzionava dopo due ore. Il nome sopra il pannello ha preso il
+resto della settimana.** Titolo, artista, copertina e pulsanti erano giusti
+quasi subito; sopra di essi Windows scriveva **"App sconosciuta"**. Sembrava un
+dettaglio cosmetico da chiudere in dieci minuti ed è diventato la cosa più
+istruttiva del mese, perché ogni ipotesi era plausibile e ognuna era sbagliata
+per un motivo diverso.
+
+1. **"Manca il VERSIONINFO."** Vero — l'eseguibile non aveva né nome né versione
+   dentro di sé — e aggiungerlo era comunque giusto. Il pannello ha continuato a
+   dire "App sconosciuta".
+
+2. **"Manca l'icona."** Anche questo vero, e anche questo giusto da fare.
+   Risultato: l'icona è comparsa nella barra del titolo, in Alt-Tab, in Esplora
+   risorse e nel Task Manager. Nel pannello multimediale, niente.
+
+3. **"Serve un AppUserModelID esplicito."** `SetCurrentProcessExplicitAppUserModelID`
+   con una stringa inventata. L'ho scritto, ha compilato, non è cambiato niente —
+   e l'ho **tolto**, che è la parte che conta: un AUMID esplicito è una promessa
+   che qualcosa da qualche parte lo registri, e nel repo non c'era niente che lo
+   facesse. Una stringa che nessuno riconosce non è un'identità, è rumore che
+   confonde chi legge il codice dopo.
+
+4. **"Allora sono le proprietà di relaunch della finestra."** `SHGetPropertyStoreForWindow`
+   più `PKEY_AppUserModel_RelaunchDisplayNameResource`, con il nome preso dalla
+   `STRINGTABLE` come `@<eseguibile>,-101` — indiretto, quindi traducibile. Il
+   simbolo non si dichiarava: né `<shobjidl.h>` né `<shlobj.h>` lo espongono con
+   le API partition attive, quindi risolto a runtime da `shell32.dll`. E qui ho
+   smesso di indovinare e ho stampato tre HRESULT:
+
+   ```
+   shell identity: store=0x00000000 name=Sonora commit=0x00000000
+   ```
+
+   Lo store si apre, il nome si risolve davvero in "Sonora", il commit riesce.
+   **Il meccanismo funziona perfettamente e Windows non lo guarda** per il
+   pannello multimediale. È stata la misura che ha spostato la domanda fuori dal
+   processo: non "cosa sbaglio", ma "chi glielo dice, allora".
+
+5. **L'esperimento decisivo, trenta secondi e nessuna riga di codice.** Un
+   collegamento nel menu Start che punta all'eseguibile, e l'app lanciata da lì.
+   Il pannello dice **Sonora**, con l'icona.
+
+   La conclusione è netta: **il nome e l'icona nel pannello multimediale vengono
+   da un collegamento registrato nel menu Start, non dall'eseguibile.** È il
+   modello di identità della shell di Windows — un'applicazione "esiste" quando
+   c'è un collegamento che porta un AppUserModelID — e nessuna chiamata dentro il
+   processo lo sostituisce. Quindi non è un bug da correggere: è lavoro
+   dell'installer, settimana 10. Il lato codice è già a posto, e quando l'MSI
+   esisterà il nome arriverà da solo.
+
+**Il secondo costo, molto più piccolo: WinRT dentro un'app Win32.**
+`init_apartment` ritorna `RPC_E_CHANGED_MODE` perché CEF ha già scelto
+l'apartment del thread — va ingoiato, non è un errore; e `uninit_apartment` non
+va chiamato mai, perché quell'apartment non è nostro. `GetForWindow` vuole un
+HWND, il che lega la sessione multimediale alla vita della finestra e non a
+quella del processo: la callback vive in una struttura condivisa che `Stop()`
+svuota, così un evento in ritardo trova un guscio vuoto invece di un puntatore
+morto.
+
+### Cosa ho imparato
+
+- **La politica è il pezzo che vale; il backend è traduzione.** Quando
+  aggiornare il pannello — cosa è cambiato, cosa no, ogni quanto — è la parte
+  difficile, ed è finita in `sonora::core` con un clock iniettato e dieci test.
+  Il file WinRT non decide niente: riceve tre struct e chiama tre API. Il
+  backend macOS, scritto dopo, è stato un pomeriggio di traduzione proprio
+  perché non doveva decidere nulla.
+- **Un aggiornamento periodico deve avere una condizione di riposo.** La prima
+  versione spingeva la timeline una volta al secondo sempre, quindi chi metteva
+  in pausa e usciva di casa pagava una chiamata di sistema al secondo per tutto
+  il pomeriggio. L'ha trovato un test scritto perché la frase "chi ha messo in
+  pausa non deve costare niente" *sembrava* già vera, non perché sospettassi un
+  bug.
+- **Un cambio di traccia deve portare con sé la timeline.** Non per cortesia:
+  senza, il pannello mostra il titolo nuovo sopra il progresso vecchio e sostiene
+  che la canzone appena partita è già a metà.
+- **La risposta a un'operazione asincrona che arriva tardi va scartata, non
+  applicata.** Caricare una copertina è asincrono; due cambi di traccia rapidi
+  producono due caricamenti che possono finire nell'ordine sbagliato. Un
+  contatore di generazione catturato per valore costa una riga ed elimina la
+  categoria.
+- **Stampare tre HRESULT ha chiuso una settimana di ipotesi.** Ogni tentativo
+  precedente era una congettura verificata solo dal sintomo finale — che non
+  cambiava mai, quindi non distingueva niente. Tre numeri hanno trasformato
+  "perché non funziona" in "quale dei tre passi fallisce", e la risposta
+  ("nessuno") era l'unica che indicava fuori dal processo.
+- **Un eseguibile che gira non è un'applicazione installata.** Da fuori sembra
+  pedanteria; da dentro è la differenza tra avere un'identità presso la shell e
+  non averla. Metà delle integrazioni con il sistema operativo — pannello
+  multimediale, jump list, notifiche, riavvio dopo un aggiornamento — sono
+  appese a quell'identità, e l'identità la crea l'installazione. Ho passato
+  cinque anni a pensare che l'installer fosse la parte noiosa dopo il software.
+- **Togliere il codice che non mantiene la sua promessa è una correzione.**
+  L'AUMID esplicito non rompeva niente e sarebbe rimasto lì per sempre a
+  suggerire a chi legge che l'identità sia risolta.
+
+### Da riprendere
+
+- **Il nome nel pannello dipende dall'installazione.** Finché Sonora si lancia
+  dalla cartella di build dirà "App sconosciuta"; da un collegamento nel menu
+  Start dice "Sonora". Si chiude con l'MSI della settimana 10, non con altro
+  codice. Documentato nel README perché è un comportamento, non un difetto.
+- **macOS non ha mai eseguito una riga di `media_integration_mac.mm`.** Il file
+  dice in testa quali tre parti sono più probabilmente sbagliate.
+- **Nessun selettore di cartella.** Rimandato dalla settimana 7 a questa e da
+  questa alla 9: serve un dialogo nativo, che appartiene alla stessa famiglia di
+  lavoro dell'integrazione con la shell.
+- **La posizione mostrata nel pannello viene campionata a 250 ms**, che è
+  abbastanza per l'occhio ma è comunque un timer che gira anche quando non
+  serve. Con un evento di stato dal player si potrebbe spegnere da fermo.
+- **Il build non compila ancora la UI**, **due istanze condividono lo stesso
+  `library.sqlite`**, **le copertine arrivano solo dai tag**, **i file OneDrive
+  non sono mai stati provati** e **la matrice CI non l'ho ancora letta** — cinque
+  voci ereditate dalla settimana 7, tutte ancora vere.
+- **`localhost:9222` resta bianco** (settimana 4), **la sandbox resta spenta**
+  (ADR 0003, settimana 10), e i **10 minuti continui senza underrun** non li ho
+  ancora misurati (settimana 5).

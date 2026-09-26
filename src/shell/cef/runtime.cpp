@@ -15,6 +15,7 @@
 #include "cef/event_channel.h"
 #include "cef/handlers.h"
 #include "cef/library_host.h"
+#include "cef/media_session.h"
 #include "cef/player_host.h"
 #include "cef/shell_metrics.h"
 #include "cef/timer.h"
@@ -33,6 +34,7 @@ std::unique_ptr<ShellMetrics> g_metrics;
 std::unique_ptr<EventChannel> g_events;
 std::unique_ptr<PlayerHost> g_player;
 std::unique_ptr<LibraryHost> g_library;
+std::unique_ptr<ShellMediaSession> g_media;
 std::unique_ptr<ShellHandlers> g_handlers;
 CefRefPtr<ShellTimer> g_heartbeat;
 bool g_initialized = false;
@@ -172,6 +174,20 @@ bool StartCef(const RuntimeConfig& config) {
   g_player->StartStateEvents(*g_events);
   g_library->StartStatusEvents(*g_events);
 
+  // The system's media panel, tied to the application window rather than to the
+  // browser view: the system shows the window's application, and the browser
+  // view is a child nobody outside this process should be told about.
+  //
+  // Started after CefInitialize because its requests are marshalled with a CEF
+  // task, and refused gracefully: a machine without it plays music with a
+  // keyboard that does nothing, which is worth a log line and not a failure.
+  g_media = std::make_unique<ShellMediaSession>(*g_player, *g_library);
+  if (g_media->Start(config.parent_window)) {
+    std::printf("media: %s\n", g_media->description().c_str());
+  } else {
+    std::fprintf(stderr, "media: %s\n", g_media->description().c_str());
+  }
+
   // A scan asked for on the command line starts here, after the event channel
   // exists -- otherwise its progress would be posted at a sink that is not there
   // yet and the first thing the page saw would be a finished scan.
@@ -229,10 +245,17 @@ void StopCef() {
   if (g_library) {
     g_library->Stop();
   }
+  // Before CefShutdown as well: it holds a timer that posts CEF tasks, and the
+  // session should close rather than leave the panel naming an application that
+  // is on its way out.
+  if (g_media) {
+    g_media->Stop();
+  }
   platform::SetWorkCallback(nullptr);
   g_app = nullptr;
   CefShutdown();
   g_handlers.reset();
+  g_media.reset();
   g_library.reset();
   g_player.reset();
   g_events.reset();

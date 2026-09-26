@@ -233,17 +233,22 @@ e puoi cercare e riprodurre qualsiasi brano.
 
 #### Settimana 8 — Media integration Windows (10h)
 
-- [ ] `IPlatformMediaIntegration` in `platform/iface/`: `setMetadata`, `setPlaybackState`,
+- [x] `IPlatformMediaIntegration` in `platform/iface/`: `setMetadata`, `setPlaybackState`,
       `setTimeline`, callback per i comandi in ingresso
-- [ ] Implementazione Windows con C++/WinRT: `SystemMediaTransportControls`
+- [x] Implementazione Windows con C++/WinRT: `SystemMediaTransportControls`
       — titolo, artista, album, thumbnail, stato, timeline
-- [ ] Comandi in ingresso: play, pause, next, previous, seek dal pannello di sistema
-- [ ] Media key hardware funzionanti anche con app in background
-- [ ] Stub macOS che **compila** in CI: `MPNowPlayingInfoCenter` + `MPRemoteCommandCenter`
+- [x] Comandi in ingresso: play, pause, next, previous, seek dal pannello di sistema
+- [x] Media key hardware funzionanti anche con app in background
+- [x] Stub macOS che **compila** in CI: `MPNowPlayingInfoCenter` + `MPRemoteCommandCenter`
       scritti ma non testati a mano — dichiaralo onestamente nel README
 
 **Completato quando:** premi il tasto play/pause della tastiera con Sonora minimizzata e
 funziona; l'overlay volume di Windows 11 mostra copertina, titolo e artista corretti.
+
+**Verificato il 26 set 2026.** Il *nome* dell'applicazione sopra il pannello resta
+"App sconosciuta" quando si lancia l'eseguibile dalla cartella di build: viene da un
+collegamento registrato nel menu Start, non dal processo, quindi si chiude con l'MSI
+della settimana 10. Da un collegamento dice "Sonora". Vedi README e diario.
 
 #### Settimana 9 — Integrazione shell (8h)
 

@@ -25,6 +25,9 @@ ui/src/bridge/generated.ts
 .cache/
 compile_commands.json
 
+# Scratch space for pair-programming sessions: notes and staged copies, not source
+Claude outputs/
+
 # OS noise
 Thumbs.db
 desktop.ini

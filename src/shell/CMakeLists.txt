@@ -15,6 +15,7 @@ add_library(sonora_cef STATIC
   cef/event_channel.cpp
   cef/handlers.cpp
   cef/library_host.cpp
+  cef/media_session.cpp
   cef/player_host.cpp
   cef/render_process.cpp
   cef/runtime.cpp
@@ -92,7 +93,15 @@ target_compile_definitions(sonora PRIVATE
   $<$<CONFIG:Debug>:SONORA_ENABLE_DEVTOOLS>)
 
 if(WIN32)
-  target_sources(sonora PRIVATE sonora.rc)
+  # The .rc is generated so the version in it cannot drift from the project's:
+  # there is one version number, in the top-level project() call, and the
+  # executable's properties, the media panel's name and --version all read it.
+  set(SONORA_RC_DIR "${CMAKE_CURRENT_LIST_DIR}")
+  configure_file(
+    "${CMAKE_CURRENT_LIST_DIR}/sonora.rc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/sonora.rc"
+    @ONLY)
+  target_sources(sonora PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/sonora.rc")
 endif()
 
 if(MSVC)

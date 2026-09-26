@@ -22,11 +22,20 @@ if(WIN32)
     win/child_window_win32.cpp
     win/paths_win32.cpp
     win/arguments_win32.cpp
+    win/media_integration_win32.cpp
     win/entry_win32.cpp)
   # dwmapi: dark title bar. shcore is not needed, per-monitor v2 awareness comes
   # from the application manifest (see src/shell/sonora.manifest).
   # shell32: CommandLineToArgvW.
-  target_link_libraries(sonora_platform PRIVATE dwmapi shell32)
+  #
+  # WindowsApp: the umbrella import library for the WinRT APIs a desktop
+  # application may call. SystemMediaTransportControls lives there, and so does
+  # the interop interface that hands it a session for an HWND.
+  #
+  # propsys and shlwapi: the window's property store, which is where an
+  # unpackaged application tells the shell its name and icon. See
+  # ConfigureShellIdentity in win/window_win32.cpp.
+  target_link_libraries(sonora_platform PRIVATE dwmapi shell32 propsys shlwapi WindowsApp)
 
 elseif(APPLE)
   set(sonora_platform_mac_sources
@@ -34,11 +43,14 @@ elseif(APPLE)
     mac/event_loop_mac.mm
     mac/child_window_mac.mm
     mac/paths_mac.mm
-    mac/arguments_mac.mm)
+    mac/arguments_mac.mm
+    mac/media_integration_mac.mm)
   target_sources(sonora_platform PRIVATE ${sonora_platform_mac_sources})
   set_source_files_properties(${sonora_platform_mac_sources}
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-  target_link_libraries(sonora_platform PRIVATE "-framework Cocoa")
+  # MediaPlayer: MPNowPlayingInfoCenter and MPRemoteCommandCenter. Compiled by
+  # CI and never run -- see the comment at the top of media_integration_mac.mm.
+  target_link_libraries(sonora_platform PRIVATE "-framework Cocoa" "-framework MediaPlayer")
 
 else()
   # Linux is not a supported target yet. The stubs keep the tree building on
@@ -54,5 +66,6 @@ else()
     linux/event_loop_stub.cpp
     linux/child_window_stub.cpp
     linux/paths_stub.cpp
-    linux/arguments_stub.cpp)
+    linux/arguments_stub.cpp
+    linux/media_integration_stub.cpp)
 endif()

@@ -9,6 +9,7 @@ configure_file(
   @ONLY)
 
 add_library(sonora_core STATIC
+  src/media_session.cpp
   src/playback_state.cpp)
 add_library(sonora::core ALIAS sonora_core)
 

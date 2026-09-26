@@ -7,6 +7,7 @@ add_executable(sonora_tests
   test_capabilities.cpp
   test_event_coalescer.cpp
   test_library.cpp
+  test_media_session.cpp
   test_player.cpp
   test_ring_buffer.cpp
   test_scanner.cpp

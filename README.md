@@ -8,11 +8,13 @@ Sonora is built the way large desktop applications actually are: a native core
 that owns audio and platform integration, a web layer that owns the interface,
 and a versioned bridge between them so the two can ship independently.
 
-> **Status: week 6 of 13.** The shell hosts a Chromium view, serves the UI over
+> **Status: week 8 of 13.** The shell hosts a Chromium view, serves the UI over
 > a custom `sonora://` scheme, and the two talk over a typed, versioned bridge
-> generated from one schema. It also plays music: a queue, a
-> transport in the window, and a gapless join between two tracks performed
-> inside the device callback. See [ROADMAP.md](ROADMAP.md) for what lands when.
+> generated from one schema. It plays music — a searchable library, a queue, and
+> a gapless join between two tracks performed inside the device callback — and
+> the operating system knows about it: Windows' media panel shows the track and
+> its cover, and the keyboard's media keys work with the window minimised. See
+> [ROADMAP.md](ROADMAP.md) for what lands when.
 
 ---
 
@@ -34,11 +36,15 @@ and a versioned bridge between them so the two can ship independently.
 | SQLite + FTS5 library index, incremental scan, cover art | working |
 | `library` capability, tracks addressed **by id — no path crosses the bridge** | working |
 | Library UI: sidebar, virtualized track list, search, queue | working |
-| Playback state machine, asset store, bridge protocol, capabilities, coalescer, ring buffer, engine — unit tested | working |
-| Platform abstraction, macOS backend | written, compiled in CI, **not tested on hardware** |
+| Windows media panel (SMTC): title, artist, cover, transport buttons | working |
+| Media keys with the window minimised or in the background | working |
+| Icon and version resource, generated from the project's one version number | working |
+| Playback state machine, media-session policy, asset store, bridge protocol, capabilities, coalescer, ring buffer, engine — unit tested | working |
+| Platform abstraction, macOS backend (window + media, `MPNowPlayingInfoCenter`) | written, compiled in CI, **not tested on hardware** |
 | Platform abstraction, Linux backend | stub; fails with a clear message at runtime |
+| The media panel's *application name* | needs an installed shortcut — see below |
 
-| SMTC, media keys, tray, jump list | weeks 8-9 |
+| Tray icon, jump list, single instance, protocol handler | week 9 |
 | MSI packaging, CI matrix | week 10 |
 | Delta updater with signature + rollback | week 11 |
 | Staged rollout, crash reporting, perf gates | week 12 |
@@ -65,6 +71,32 @@ $env:SONORA_CEF_SWITCHES = "disable-direct-composition"
 
 `SONORA_TRACE_BRIDGE=1` logs every bridge call before and after it runs; calls
 that hold the UI thread for more than 250 ms say so on their own.
+
+**Why the media panel says "Unknown app":** it is not a missing feature, and it
+is worth knowing before you go looking for one. Windows takes the *name and icon
+above* the media panel from a shortcut registered in the Start Menu, not from
+the running executable — an application exists, as far as the shell is
+concerned, once something installed it. A version resource, an icon resource,
+an explicit AppUserModelID and the window's relaunch properties all change other
+parts of the shell (the title bar, Alt-Tab, Explorer, Task Manager) and none of
+them change that line. Sonora sets the relaunch properties anyway, because they
+are the half the process itself can do, and prints whether they took:
+
+```
+shell identity: store=0x00000000 name=Sonora commit=0x00000000
+```
+
+Launched from the build folder, the panel says "Unknown app". Launched from a
+Start Menu shortcut pointing at the same executable, it says **Sonora**, with
+the icon. The MSI in week 10 closes it; until then the shortcut is the
+workaround:
+
+```powershell
+$shell = New-Object -ComObject WScript.Shell
+$link  = $shell.CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Sonora.lnk")
+$link.TargetPath = "C:\Workspace\Sonora\build\win-debug\bin\Debug\Sonora.exe"
+$link.Save()
+```
 
 **Known gap:** the CEF sandbox is currently disabled, because `cef_sandbox.lib`
 is published only for the static CRT while everything else in the build uses the
@@ -184,7 +216,28 @@ costs one rescan and nothing else ([ADR 0007](docs/adr/0007-the-library-index-is
 
 There is no folder picker yet. A text box in the page would put a filesystem
 path back on the bridge, which is precisely what week 7 removed; it needs a
-native dialog, which is week 8.
+native dialog, which belongs with the rest of the shell integration in week 9.
+
+### Media keys and the system panel
+
+Nothing to switch on: while a track is loaded, Sonora holds a system media
+session. On Windows that is `SystemMediaTransportControls`, obtained for the
+application window, so the volume overlay shows the title, the artist and the
+cover art, its buttons work, and the keyboard's play/pause, next and previous
+keys reach Sonora even when the window is minimised or another application has
+focus.
+
+What gets sent, and when, is decided by `sonora::core::MediaSessionPolicy` —
+portable, clocked by an injected timestamp and unit tested. The player is
+sampled ten times a second; the panel receives the metadata only when the track
+changes, the position about once a second while playing, immediately after a
+seek, and **nothing at all** while paused. The platform backend translates, and
+decides nothing.
+
+The macOS backend (`MPNowPlayingInfoCenter` + `MPRemoteCommandCenter`) is
+written and compiles in CI, and **has never run**: no Mac has executed a line of
+it. The file says so at the top, and names the three parts most likely to be
+wrong. Linux is a stub that fails with a clear message.
 
 ### Working on the UI
 
@@ -217,12 +270,19 @@ finds. Override with `$env:CMAKE_GENERATOR`.
 ./tools/format.ps1 -Check   # what CI runs
 ```
 
+clang-format is taken from `PATH`, and otherwise from the Visual Studio
+installation — the C++ workload ships LLVM without putting it on `PATH`, so on
+most Windows machines it is installed and unreachable by name at the same time.
+CI uses **clang-format 18**; the script says so if the one it found is a
+different major version, because two majors disagree about real cases and a
+check that passes locally and fails in CI is worse than no check.
+
 ---
 
 ## Layout
 
 ```
-src/core/        playback state — no OS dependency, no screen, no sound card
+src/core/        playback state, media-session policy — no OS, no screen, no sound card
 src/audio/       ring buffer, decoders, engine — no OS, no CEF, no device
 src/assets/      the web bundle as bytes: embedded table + the two stores that serve it
 src/bridge/      the native<->web protocol: envelope, errors, generated dispatch — no CEF
@@ -232,7 +292,7 @@ ui/              the web interface (TypeScript + Vite)
 tests/           Catch2, runs against core and assets on every platform
 schema/          bridge.schema.json — the single source of truth for the bridge
 cmake/           CEF provisioning and pinning, asset and bridge generation
-tools/           pin_cef.py, embed_assets.py, gen_bridge.py, format.ps1, run-dev.ps1
+tools/           pin_cef.py, embed_assets.py, gen_bridge.py, make_icon.py, format.ps1, run-dev.ps1
 docs/adr/        architecture decision records
 ```
 
