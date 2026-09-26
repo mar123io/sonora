@@ -1084,3 +1084,141 @@ Google.
 - **`localhost:9222` resta bianco** (settimana 4), **la sandbox resta spenta**
   (ADR 0003, settimana 10), e i **10 minuti continui senza underrun** non li ho
   ancora misurati (settimana 5).
+
+---
+
+## Settimana 10 — CI e packaging
+
+**Pianificata:** 23-29 nov 2026 · **Effettiva:** 26 set 2026
+**Stima:** 9 h · **Effettivo:** ___ h
+**Tag:** `v0.5.0` — il primo tag che è una versione e non un nome
+
+### Obiettivo
+
+Che un tag produca da solo una Release con l'MSI allegato, e che la matrice
+windows/macOS/linux sia verde — dopo sei settimane in cui non l'avevo mai letta.
+
+### Fatto
+
+- [x] Versione da `git describe`, iniettata in `project()` e da lì ovunque
+- [x] Solo `vX.Y.Z` conta come tag di release: i tag narrativi restano nomi
+- [x] `-DSONORA_BUILD_UI=ON`: la UI la costruisce la build, e CI la usa
+- [x] Avviso a configure quando `ui/dist` è più vecchia di `ui/src`
+- [x] clang-format **20.1.7** da pip, stesso numero nel workflow e in `format.ps1`
+- [x] `builtin-baseline` in `vcpkg.json`, con vcpkg clonato a quel commit dalla CI
+- [x] WiX v4 **fissato**, installer MSI per utente, disinstallazione pulita
+- [x] Il collegamento nel menu Start porta l'AppUserModelID (settimane 8 e 9)
+- [x] Tipi audio come "Apri con", mai predefinito; un percorso sulla riga di comando si riproduce
+- [x] `install(RUNTIME_DEPENDENCY_SET)`: il payload lo decidono i binari, non una lista
+- [x] Firma con certificato autofirmato in `tools/sign.ps1`, **fuori** dalla CI e spiegato
+- [x] Job `MSI` e `GitHub Release`, la Release nasce come bozza
+
+### Cosa è costato più del previsto
+
+**Questa settimana è stata un'unica lezione ripetuta quattro volte: una cosa
+non fissata è una cosa che cambierà sotto di te.** Ne avevo fissate tre —
+CEF dalla settimana 2, clang-format e i pacchetti vcpkg — e ogni pezzo che
+avevo lasciato libero mi si è rotto in mano nell'ordine in cui l'ho toccato.
+
+1. **WiX.** `dotnet tool install --global wix` installa la v7, che si rifiuta
+   di costruire finché non accetti la licenza dell'Open Source Maintenance Fee.
+   Un major che nessuno aveva scelto, che mette un cancello commerciale in
+   mezzo a una build. Fissato a `4.*`, e `package.ps1` adesso **verifica** di
+   avere davvero una v4 invece di fidarsi del nome sul PATH.
+
+2. **Il `Files` di WiX.** L'elemento che raccoglie una cartella in una riga
+   esiste, ma è arrivato nella v5 — dall'altra parte di quel cancello. Quindi
+   `tools/gen_installer_files.py`, che è il quarto generatore del repo dopo
+   bridge, asset e icona. Heat, il raccoglitore della v3, non c'è più nella v4;
+   non è una gran perdita, perché anche il suo output era generato, solo da uno
+   strumento che nessuno poteva leggere.
+
+3. **Il baseline di vcpkg, due volte.** Fissare il registro sembrava una riga
+   di JSON. Il primo fallimento: l'immagine macOS ha un clone di vcpkg più
+   vecchio del commit fissato, e vcpkg non se lo va a prendere. Ho aggiunto un
+   passo che faceva la fetch — e il secondo fallimento ha spiegato il primo:
+
+   ```
+   error: no version database entry for sqlite3 at 3.53.4#1
+   ```
+
+   vcpkg legge `versions/baseline.json` **dal commit**, ma il database delle
+   versioni per porta **dall'albero di lavoro**, che resta a dov'era. Non
+   esiste una mezza misura: avere il registro che un baseline descrive
+   significa avere il registro a quel commit, e quindi possedere il checkout.
+   Era l'alternativa che avevo scartato due ore prima perché "costa minuti a
+   ogni corsa" — e la stima era sbagliata, perché la cache la paga una volta
+   per baseline.
+
+4. **La UI che non veniva costruita dal passo che diceva di costruirla.** Su
+   Windows npm è `npm.cmd`, CMake scrive i passi di un custom command in un file
+   batch, e un batch che ne invoca un altro senza `call` non torna indietro: il
+   secondo rimpiazza il primo. `npm ci` girava, `npm run build` no, e la build
+   incorporava una `ui/dist` di tre settimane prima stampando *"Embedding the
+   web UI"*. L'unica traccia era un `warning MSB8065` in mezzo a duemila righe,
+   che avevo letto e superato.
+
+**E poi la lista scritta a mano, contro cui avevo appena scritto un commento.**
+Le regole di `install` elencavano i file di CEF e i due eseguibili — quello che
+una persona si ricorda — e non `sqlite3.dll`, `tag.dll`, `z.dll`, che vcpkg
+copia accanto all'eseguibile in un passo post-build che CMake non conosce.
+L'MSI si è costruito, si è installato, e l'applicazione è morta all'avvio.
+Mentre scrivevo, nel generatore del payload: *"una lista di 250 file mantenuta
+da una persona è sbagliata la prima volta che CEF aggiunge una dll, e sbagliata
+in silenzio"*.
+
+### Cosa ho imparato
+
+- **Fissare una versione non è pignoleria, è la differenza fra una build e una
+  scommessa.** Quattro strumenti, quattro storie diverse, un solo schema: quello
+  lasciato libero cambia quando gli pare, e cambia in produzione.
+- **Un numero scritto due volte è un numero che divergerà.** La versione veniva
+  da `project()` e da `vcpkg.json`; ora viene dal tag, e i tag narrativi sono
+  esclusi da un `--match` perché `0.4-native-2-g1fd9823` è una frase, non una
+  versione.
+- **Un timbro che può comparire senza che il lavoro sia avvenuto non certifica
+  niente.** Lo stamp della UI era un `touch`; ora è una copia dell'`index.html`
+  costruito, quindi se la build non l'ha prodotto il passo fallisce. È la stessa
+  idea dei test della settimana 9: un controllo che non può fallire non è un
+  controllo.
+- **Non chiedere a una persona quello che si può chiedere ai binari.**
+  `install(RUNTIME_DEPENDENCY_SET)` legge le tabelle di import e porta quello
+  che nominano; la dipendenza aggiunta il mese prossimo viaggia da sola.
+- **Un passo che ha bisogno di un valore non ha bisogno di un interprete.**
+  Leggere quaranta caratteri esadecimali con Python è costato un `\a` diventato
+  carattere di campanello dentro `D:\a\sonora\sonora`. `grep` non ha quel
+  problema perché non ha quella potenza.
+- **Il secondo errore spiega il primo, se lo lasci parlare.** Ho corretto il
+  sintomo (il commit mancante) invece della causa (il registro sbagliato), e la
+  correzione ha prodotto un errore diverso che diceva esattamente cosa avevo
+  frainteso. Vale la pena ricordarselo: quando una toppa produce un errore
+  *nuovo*, spesso è il problema vero che si presenta.
+- **La matrice verde al primo colpo su macOS è stato il risultato più forte
+  della settimana**, e non me lo aspettavo: avevo previsto rosso, perché
+  `window_mac.mm` ha guadagnato tre metodi in due settimane senza vedere un
+  compilatore. L'ADR 0002 ha retto — quei tre metodi parlano di struct portabili
+  e l'unica cosa veramente AppKit, l'asse y che cresce all'insù, era scritta al
+  punto giusto. **Un'astrazione che nessuno esercita per sei settimane e poi
+  passa non è fortuna: è la prova che il confine era nel posto giusto.**
+
+### Da riprendere
+
+- **La firma è dimostrata, non usata.** `tools/sign.ps1` fa la cosa vera —
+  certificato, `signtool`, marca temporale, verifica che fallisce — ma il
+  certificato è autofirmato, cioè attendibile su una macchina sola. Nella CI
+  c'è il commento che dice dove andrebbe il passo con un certificato vero, e
+  Smart App Control continuerà a rifiutare l'MSI (settimana 7).
+- **Il runtime di Visual C++ non viaggia con l'installer**: è escluso perché si
+  risolve in `System32`. Su una macchina che non ha mai installato
+  un'applicazione C++ l'app non parte, e la prova non l'ho fatta.
+- **`actions/checkout@v4` e `setup-node@v4` girano su Node 20, deprecato**, e
+  `ubuntu-latest` diventa Ubuntu 26 il 19 ottobre. Nessuna delle due è rotta
+  oggi.
+- **L'MSI pesa 159 MB** ed è quasi tutto CEF. Un aggiornamento completo per
+  cambiare tre righe di C++ è esattamente il problema che la settimana 11
+  esiste per risolvere.
+- **La sandbox di CEF resta spenta** (ADR 0003): era in programma per questa
+  settimana e non l'ho toccata.
+- **I 10 minuti continui senza underrun** non li ho ancora misurati
+  (settimana 5), le **copertine arrivano solo dai tag**, i **file OneDrive** non
+  sono mai stati provati, e `localhost:9222` **resta bianco** (settimana 4).

@@ -279,18 +279,25 @@ settimana 1; questa settimana ne ha prodotto uno che non era previsto qui).
 
 #### Settimana 10 — CI e packaging (9h)
 
-- [ ] GitHub Actions, matrice:
+- [x] GitHub Actions, matrice:
   - `windows-latest`: configure, build, test, package, upload artifact
   - `macos-latest`: **solo compilazione** di core + bridge + platform/mac — dimostra che
     l'astrazione regge davvero, ed è verificabile da chiunque guardi i log
-- [ ] Cache vcpkg e CEF (altrimenti ogni build costa 20 minuti)
-- [ ] Installer MSI con WiX v4: shortcut, associazione file, uninstall pulita
-- [ ] Versioning semantico derivato dal tag git, iniettato in CMake e nelle risorse dell'exe
-- [ ] Firma del binario (certificato self-signed è accettabile: documenta che in produzione
+- [x] Cache vcpkg e CEF (altrimenti ogni build costa 20 minuti)
+- [x] Installer MSI con WiX v4: shortcut, associazione file, uninstall pulita
+- [x] Versioning semantico derivato dal tag git, iniettato in CMake e nelle risorse dell'exe
+- [x] Firma del binario (certificato self-signed è accettabile: documenta che in produzione
       sarebbe un EV cert e perché)
 
 **Completato quando:** un tag `v0.5.0` produce automaticamente una GitHub Release con l'MSI
 firmato allegato, e la build macOS è verde.
+
+**Verificato il 26 set 2026**, con una differenza dichiarata: la Release nasce come
+**bozza** e l'MSI **non è firmato in CI**. Il certificato che questo repository può
+produrre è autofirmato, e su un file che altri scaricano una firma non verificabile è
+peggio di nessuna firma — `tools/sign.ps1` dimostra la pipeline e dice dove andrebbe il
+certificato vero. La matrice è verde su windows/macOS/linux, e macOS lo era al primo
+colpo dopo sei settimane senza essere letta.
 
 #### Settimana 11 — Updater con delta e rollback (11h)
 

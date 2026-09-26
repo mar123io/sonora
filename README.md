@@ -8,14 +8,16 @@ Sonora is built the way large desktop applications actually are: a native core
 that owns audio and platform integration, a web layer that owns the interface,
 and a versioned bridge between them so the two can ship independently.
 
-> **Status: week 9 of 13.** The shell hosts a Chromium view, serves the UI over
+> **Status: week 10 of 13.** The shell hosts a Chromium view, serves the UI over
 > a custom `sonora://` scheme, and the two talk over a typed, versioned bridge
 > generated from one schema. It plays music — a searchable library, a queue, and
 > a gapless join between two tracks performed inside the device callback — and
 > it behaves like a desktop application: the media panel and the media keys, a
 > tray icon, taskbar thumbnail buttons, a jump list, one instance per session,
 > `sonora://` links from the browser, and a window that reopens where you left
-> it. See [ROADMAP.md](ROADMAP.md) for what lands when.
+> it. It also ships: a tag builds an MSI on a clean machine and attaches it to
+> a draft release, and every version it depends on is pinned. See
+> [ROADMAP.md](ROADMAP.md) for what lands when.
 
 ---
 
@@ -49,9 +51,11 @@ and a versioned bridge between them so the two can ship independently.
 | `sonora://track/<id>` and `sonora://album/<id>` from the browser | working |
 | Window position, size and maximized state restored across restarts | working |
 | Durable store: play history and the stable ids links are made of ([ADR 0008](docs/adr/0008-two-stores-with-opposite-policies.md)) | working |
-| The media panel's *application name* | needs an installed shortcut — see below |
-
-| MSI packaging, CI matrix, signing | week 10 |
+| Per-user MSI: Start Menu shortcut with the AppUserModelID, clean uninstall | working |
+| CI matrix windows/macOS/linux, green, with vcpkg and CEF cached | working |
+| One version number, from the git tag, reaching the binary and the MSI | working |
+| Every tool version pinned: CEF, vcpkg registry, clang-format, WiX | working |
+| Code signing | demonstrated with a self-signed certificate — see below |
 | Delta updater with signature + rollback | week 11 |
 | Staged rollout, crash reporting, perf gates | week 12 |
 
@@ -78,8 +82,9 @@ $env:SONORA_CEF_SWITCHES = "disable-direct-composition"
 `SONORA_TRACE_BRIDGE=1` logs every bridge call before and after it runs; calls
 that hold the UI thread for more than 250 ms say so on their own.
 
-**Why the media panel says "Unknown app":** it is not a missing feature, and it
-is worth knowing before you go looking for one. Windows takes the *name and icon
+**Why the media panel used to say "Unknown app":** fixed by the installer in
+week 10, and the reason is worth keeping because it explains what an installer
+is actually for. Windows takes the *name and icon
 above* the media panel from a shortcut registered in the Start Menu, not from
 the running executable — an application exists, as far as the shell is
 concerned, once something installed it. A version resource, an icon resource,
@@ -92,10 +97,10 @@ are the half the process itself can do, and prints whether they took:
 shell identity: store=0x00000000 name=Sonora commit=0x00000000
 ```
 
-Launched from the build folder, the panel says "Unknown app". Launched from a
-Start Menu shortcut pointing at the same executable, it says **Sonora**, with
-the icon. The MSI in week 10 closes it; until then the shortcut is the
-workaround:
+Launched from the build folder, the panel says "Unknown app". Launched from the
+Start Menu shortcut the MSI writes — which carries `System.AppUserModel.ID` —
+it says **Sonora**, with the icon, and the jump list survives closing the
+application. While developing, a shortcut made by hand does the same thing:
 
 ```powershell
 $shell = New-Object -ComObject WScript.Shell
@@ -286,6 +291,58 @@ seriously only when something registers it. Sonora claims the id
 the list to appear while it is running; week 10's installer writes the Start Menu
 shortcut that carries the same id, and that is what makes it persist.
 
+### Building the installer
+
+```powershell
+dotnet tool install --global wix --version 4.*
+./tools/package.ps1              # build\packages\Sonora-<version>-x64.msi
+./tools/package.ps1 -Sign        # ...and sign it, see below
+```
+
+Per-user, so it installs without administrator rights, into
+`%LOCALAPPDATA%\Programs\Sonora`. Uninstalling removes the program and leaves
+`%LOCALAPPDATA%\Sonora` alone: the two databases there are the play history and
+the library cache, and an uninstaller that deletes somebody's listening history
+has overstepped.
+
+What ships is the `cmake --install` tree rather than the build directory, and
+the dependency list is not written by hand — `install(RUNTIME_DEPENDENCY_SET)`
+reads the binaries' import tables. The payload fragment WiX needs is generated
+by `tools/gen_installer_files.py`, because the `Files` element that harvests a
+directory in one line arrived in WiX v5, and v5 is behind the Open Source
+Maintenance Fee licence gate. WiX is pinned to v4 for the same reason.
+
+**Signing** is `tools/sign.ps1`: a certificate, `signtool`, a timestamp, and a
+verification step that fails the build. Every one of those is the same in
+production — but the certificate this repository can produce is self-signed,
+which is trusted by exactly one machine, so signing is deliberately **not** in
+CI. On a file other people download, a signature nobody can verify is worse
+than none. A real release needs an OV or EV certificate with its key in an HSM
+or a cloud signing service; the CI comment marks where that step goes.
+
+### Versions, and why they are all pinned
+
+One version number, and it comes from the git tag. `cmake/Version.cmake` runs
+before `project()` and accepts only `vMAJOR.MINOR.PATCH` as a release tag — the
+milestone tags (`v0.3-player`, `v0.4-native`) are names, not versions — and from
+`project(VERSION ...)` the number reaches the executable's VERSIONINFO resource,
+the startup line and the MSI's ProductVersion.
+
+Four external things are pinned, and each one is pinned because leaving it
+loose broke something:
+
+| | Pinned in | What happened when it was not |
+|---|---|---|
+| CEF | `cmake/cef_version.cmake` | (week 2, pinned from the start) |
+| vcpkg registry | `builtin-baseline` in `vcpkg.json` | two builds of one commit could link two different sqlite3 |
+| clang-format | `CLANG_FORMAT_VERSION`, installed from pip | a check that passed locally and failed in CI |
+| WiX | `WIX_VERSION`, `4.*` | the unpinned install took v7, which will not build without a commercial licence |
+
+CI clones the vcpkg registry at the baseline rather than using the runner
+image's copy. That is not belt and braces: vcpkg reads `versions/baseline.json`
+from the pinned commit but the per-port version database from the working tree,
+so a borrowed clone means a registry that half agrees with the pin.
+
 ### Where the window opens
 
 Position, size and maximized state are remembered in a one-line file next to the
@@ -350,7 +407,9 @@ ui/              the web interface (TypeScript + Vite)
 tests/           Catch2, runs against core and assets on every platform
 schema/          bridge.schema.json — the single source of truth for the bridge
 cmake/           CEF provisioning and pinning, asset and bridge generation
-tools/           pin_cef.py, embed_assets.py, gen_bridge.py, make_icon.py, format.ps1, run-dev.ps1
+tools/           pin_cef.py, embed_assets.py, gen_bridge.py, make_icon.py,
+                 gen_installer_files.py, package.ps1, sign.ps1, format.ps1, run-dev.ps1
+installer/       Sonora.wxs -- the MSI, and the shortcut that carries the AppUserModelID
 docs/adr/        architecture decision records
 ```
 
