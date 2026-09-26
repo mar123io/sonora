@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <optional>
+#include <system_error>
 #include <unordered_set>
 #include <utility>
 
@@ -143,9 +144,43 @@ void DesktopIntegration::ApplyActivation(const std::vector<std::string>& argumen
     return;
   }
 
+  // A command line can also be a list of files: that is what "Open with
+  // Sonora" in Explorer produces, and what dragging an album onto the
+  // executable produces. Collected first, played as one queue, because six
+  // files selected together are six arguments and six separate queues would
+  // leave the last one playing alone.
+  std::vector<std::filesystem::path> files;
+
+  // --library takes a value, and that value is a folder to index rather than
+  // something to play. Without this the argument after it would be examined on
+  // its own merits, which is fine for a folder and surprising for the day
+  // somebody points --library at a file.
+  bool skip_next = false;
+
   for (const std::string& argument : arguments) {
+    if (skip_next) {
+      skip_next = false;
+      continue;
+    }
+    if (argument == "--library") {
+      skip_next = true;
+      continue;
+    }
+
     const core::DeepLink link = core::ParseDeepLink(argument);
     if (!link.valid()) {
+      // Not a link. A file the shell handed over is the other thing an
+      // argument can be -- and the rule that makes this safe is the same one
+      // --play has had since week 5: it is a path from the *shell*, not from
+      // the page. Nothing from the renderer reaches here, and what does is
+      // opened by the same decoder that opens anything else.
+      if (!argument.empty() && argument.front() != '-') {
+        std::error_code ignored;
+        const std::filesystem::path candidate = Utf8Path(argument);
+        if (std::filesystem::is_regular_file(candidate, ignored)) {
+          files.push_back(candidate);
+        }
+      }
       continue;
     }
 
@@ -179,6 +214,15 @@ void DesktopIntegration::ApplyActivation(const std::vector<std::string>& argumen
     player->Play();
     std::printf("desktop: %s -> %zu track(s)\n", argument.c_str(), to_play.size());
     return;  // one link per activation; a command line with two is not a thing
+  }
+
+  if (!files.empty()) {
+    player->ClearQueue();
+    for (const std::filesystem::path& file : files) {
+      player->Enqueue(file);
+    }
+    player->Play();
+    std::printf("desktop: %zu file(s) from the command line\n", files.size());
   }
 }
 

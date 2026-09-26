@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The MSI.
+
+  Three things here are decisions rather than boilerplate, and each one has a
+  week behind it:
+
+  * Scope="perUser". A per-machine install needs administrator rights, and an
+    application that asks for them to put a music player in a folder is one
+    people stop installing. Everything Sonora writes is per user anyway: the
+    databases in %LOCALAPPDATA%, the URL scheme under HKCU, the Start Menu
+    shortcut. There is also nothing here that a second user on the same machine
+    would want to share.
+
+  * The Start Menu shortcut carries System.AppUserModel.ID. This is the whole
+    point of the installer existing this early. Week 8 found that Windows takes
+    the name and icon above the media panel from a registered shortcut, not
+    from the executable; week 9 found that a jump list is stored per
+    AppUserModelID and only persists when something registers it. Both are one
+    line in this file, and neither could be fixed in C++ at all. The id must
+    match src/platform/win/app_identity.h exactly — if they ever disagree, the
+    shell treats the installed application and the running process as two
+    different programs, silently.
+
+  * The audio file types are registered as "open with", never as the default.
+    An installer that makes itself the default handler for .mp3 without asking
+    is the behaviour everybody complains about, and Sonora has no business
+    deciding what plays somebody's music. OpenWithProgids puts it in the list
+    and leaves the choice where it belongs.
+
+  Version, payload directory and output path come from the command line; see
+  tools/package.ps1.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Sonora"
+      Manufacturer="Mario Lizzio"
+      Version="$(var.Version)"
+      UpgradeCode="7E9EA220-371E-42F7-8799-79228BDF9E88"
+      Scope="perUser"
+      Compressed="yes">
+
+    <SummaryInformation Description="Sonora -- a native C++ desktop shell hosting a web UI" />
+
+    <!-- An upgrade removes the old version before laying down the new one,
+         which is what stops two copies of libcef.dll from arguing. Downgrades
+         are refused with a sentence rather than a failure code. -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of Sonora is already installed. Uninstall it first if you really want this one." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- The Id has to end in the source file's extension: WiX reads the icon
+         out of the executable and the installer's own tooling decides how by
+         looking at that name, not at the file. -->
+    <Icon Id="Sonora.exe" SourceFile="$(var.PayloadDir)\Sonora.exe" />
+    <Property Id="ARPPRODUCTICON" Value="Sonora.exe" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/mar123io/sonora" />
+    <!-- No repair option in Programs and Features: there is nothing to repair
+         that reinstalling would not do better, and a button that does nothing
+         useful is worse than no button. -->
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Sonora" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="Sonora" Level="1">
+      <ComponentGroupRef Id="Payload" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="UrlProtocol" />
+      <ComponentRef Id="FileAssociation" />
+    </Feature>
+
+    <!-- ComponentGroup "Payload" is not here: it is generated, into
+         build/<preset>/generated/payload.wxs, by tools/gen_installer_files.py,
+         and handed to wix build alongside this file.
+
+         The one-line version of it exists — WiX's Files element harvests a
+         directory wholesale — but it arrived in v5, and v5 is where the Open
+         Source Maintenance Fee licence gate starts. Between a licence and a
+         generator, this project already had three generators. -->
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="E8DC5DD8-1D00-40FA-A2A1-8C9708A2E9FD">
+      <Shortcut Id="SonoraStartMenu"
+                Name="Sonora"
+                Description="Play the music on this computer"
+                Target="[INSTALLFOLDER]Sonora.exe"
+                WorkingDirectory="INSTALLFOLDER">
+        <!-- The line weeks 8 and 9 were waiting for. Must equal
+             kAppUserModelId in src/platform/win/app_identity.h. -->
+        <ShortcutProperty Key="System.AppUserModel.ID" Value="MarioLizzio.Sonora" />
+      </Shortcut>
+      <!-- A per-user component needs a per-user key path, and a registry value
+           is the conventional one: the file the shortcut points at belongs to a
+           different component. -->
+      <RegistryValue Root="HKCU" Key="Software\Mario Lizzio\Sonora"
+                     Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Component Id="UrlProtocol" Directory="INSTALLFOLDER" Guid="05FF2ADC-3B47-403F-AAEF-F60B568811FB">
+      <!-- The same keys src/platform/win/url_scheme_win32.cpp writes at every
+           start. Both exist on purpose: the running application keeps the
+           registration pointing at itself during development, where the
+           executable moves constantly, and the installer makes an installed
+           copy work before it has ever been run. They write the same values,
+           so whichever goes last is right. -->
+      <RegistryValue Root="HKCU" Key="Software\Classes\sonora"
+                     Type="string" Value="URL:Sonora Protocol" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\sonora"
+                     Name="URL Protocol" Type="string" Value="" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\sonora\DefaultIcon"
+                     Type="string" Value="[INSTALLFOLDER]Sonora.exe,0" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\sonora\shell\open\command"
+                     Type="string" Value="&quot;[INSTALLFOLDER]Sonora.exe&quot; &quot;%1&quot;" />
+    </Component>
+
+    <Component Id="FileAssociation" Directory="INSTALLFOLDER" Guid="395C0AD5-3590-4EDD-AD63-26A6B545D9D9">
+      <RegistryValue Root="HKCU" Key="Software\Classes\Sonora.Track"
+                     Type="string" Value="Audio track" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\Sonora.Track\DefaultIcon"
+                     Type="string" Value="[INSTALLFOLDER]Sonora.exe,0" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\Sonora.Track\shell\open\command"
+                     Type="string" Value="&quot;[INSTALLFOLDER]Sonora.exe&quot; &quot;%1&quot;" />
+
+      <!-- OpenWithProgids, not a default: Sonora appears in "Open with" and
+           changes nothing about what double-clicking already does. The formats
+           listed are the ones miniaudio can actually decode — offering to open
+           an .ogg it cannot play would be a worse kind of lie than not
+           appearing at all. -->
+      <RegistryValue Root="HKCU" Key="Software\Classes\.mp3\OpenWithProgids"
+                     Name="Sonora.Track" Type="string" Value="" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\.flac\OpenWithProgids"
+                     Name="Sonora.Track" Type="string" Value="" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\.wav\OpenWithProgids"
+                     Name="Sonora.Track" Type="string" Value="" />
+    </Component>
+  </Package>
+</Wix>

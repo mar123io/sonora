@@ -136,3 +136,95 @@ endif()
 # libcef.dll and its resources must sit next to the executable, or the
 # application starts and exits immediately with no message.
 sonora_copy_cef_runtime(sonora)
+
+# ---------------------------------------------------------------------------
+# What ships
+# ---------------------------------------------------------------------------
+# vcpkg installs a Release and a Debug tree; the dependency scan below is told
+# about both because the same rules serve both presets, and a directory that
+# does not exist is simply never matched.
+if(DEFINED _VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+  set(SONORA_VCPKG_BIN_DIRS
+    "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
+else()
+  set(SONORA_VCPKG_BIN_DIRS "")
+endif()
+
+# The installer harvests the install tree, not the build directory, and the
+# difference is the reason these rules exist: bin/Release also holds
+# sonora_tests.exe, every object file's leftovers and whatever else a build
+# leaves lying around. An installer that ships its own test runner is an
+# installer nobody read.
+#
+# CEF_BINARY_FILES and CEF_RESOURCE_FILES are CEF's own lists, the same ones
+# sonora_copy_cef_runtime copies next to the executable -- so the set that
+# ships and the set that lets a build run locally cannot drift apart. One of
+# the resource entries is a directory (locales), which is why this loop asks.
+if(WIN32)
+  # RUNTIME_DEPENDENCY_SET, and this is the part that was wrong the first time.
+  #
+  # The rules below listed CEF's files and the two executables, which is what a
+  # person remembers. They did not list sqlite3.dll, tag.dll and z.dll, which
+  # vcpkg copies next to the executable after the link and which CMake
+  # therefore knows nothing about. The MSI built, installed, and the
+  # application it installed died on launch with "sqlite3.dll was not found" --
+  # exactly the failure the comment in tools/gen_installer_files.py describes,
+  # one step further up the pipeline, in a list I had written by hand while
+  # writing that comment.
+  #
+  # So the binaries are asked instead. CMake reads the import tables at install
+  # time and brings what they name, which means a dependency added next month
+  # ships without anybody remembering it.
+  # RUNTIME_DEPENDENCY_SET before RUNTIME DESTINATION, and not by taste: the
+  # signature takes the set name among the arguments that apply to the whole
+  # call, and once parsing has entered a per-artifact block (RUNTIME, LIBRARY,
+  # ARCHIVE) anything that belongs outside it is simply "an unknown argument".
+  install(TARGETS sonora sonora_helper
+    RUNTIME_DEPENDENCY_SET sonora_runtime
+    RUNTIME DESTINATION ".")
+
+  install(RUNTIME_DEPENDENCY_SET sonora_runtime
+    PRE_EXCLUDE_REGEXES
+      # API sets are not files; nothing can be copied for them.
+      "api-ms-win-.*"
+      "ext-ms-.*"
+      # CEF's own, installed from CEF's own list below. Excluding it here also
+      # stops the scan from recursing into a 200 MB library to rediscover the
+      # files that list already names.
+      "^libcef\\.dll$"
+      "^chrome_elf\\.dll$"
+    POST_EXCLUDE_REGEXES
+      # Anything that resolved out of Windows itself. The Visual C++ runtime is
+      # in here, which is a real dependency being left to the machine: it is
+      # present on any Windows that has ever installed a C++ application, and
+      # shipping it app-locally is a decision for the day a clean-machine
+      # install fails, not a guess made now.
+      "[Ss]ystem32"
+      "[Ss]ys[Ww]ow64"
+    DIRECTORIES
+      # Unquoted: it is a list, and quoting it would hand CMake one directory
+      # with a semicolon in its name.
+      ${SONORA_VCPKG_BIN_DIRS}
+      "${CEF_BINARY_DIR}"
+    DESTINATION ".")
+
+  foreach(cef_file IN LISTS CEF_BINARY_FILES)
+    install(FILES "${CEF_BINARY_DIR}/${cef_file}" DESTINATION ".")
+  endforeach()
+
+  foreach(cef_file IN LISTS CEF_RESOURCE_FILES)
+    if(IS_DIRECTORY "${CEF_RESOURCE_DIR}/${cef_file}")
+      install(DIRECTORY "${CEF_RESOURCE_DIR}/${cef_file}" DESTINATION ".")
+    else()
+      install(FILES "${CEF_RESOURCE_DIR}/${cef_file}" DESTINATION ".")
+    endif()
+  endforeach()
+
+  # Chromium's licence obligations are not optional, and neither is ours. Two
+  # calls rather than one list, because the second needs a name that does not
+  # overwrite the first.
+  install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" DESTINATION ".")
+  install(FILES "${CEF_ROOT}/LICENSE.txt" DESTINATION "."
+          RENAME "LICENSE-cef.txt" OPTIONAL)
+endif()
