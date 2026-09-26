@@ -1,11 +1,31 @@
 cmake_minimum_required(VERSION 3.28)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+
+if(POLICY CMP0207)
+  # file(GET_RUNTIME_DEPENDENCIES) compares a dependency's path against the
+  # exclude patterns. Under the old behaviour it compares the path as Windows
+  # handed it over -- "C:\WINDOWS\system32/kernel32.dll", with both kinds of
+  # separator in one string -- and under the new one it normalises first.
+  #
+  # The exclusions in src/shell/CMakeLists.txt happen to work either way,
+  # because none of them contains a separator. Taking the new behaviour is
+  # still the right answer: the warning is CMake saying "this rule depends on
+  # a detail you did not choose", and a rule about paths that behaves
+  # differently depending on who wrote the slashes is a rule waiting to be
+  # wrong on the next dependency.
+  cmake_policy(SET CMP0207 NEW)
+endif()
+
+# Before project(), because project(VERSION ...) is where the number has to
+# arrive. See cmake/Version.cmake for what counts as a release tag and why the
+# milestone tags are deliberately not one.
+include(Version)
+
 project(Sonora
-  VERSION 0.3.0
+  VERSION ${SONORA_VERSION}
   DESCRIPTION "Native C++ desktop shell hosting a web UI"
   LANGUAGES CXX)
-
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 # Objective-C++ is only needed for the macOS platform layer.
 if(APPLE)
@@ -42,22 +62,22 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Version stamp: <project version>+<git describe>, "unknown" outside a checkout
+# What this build calls itself
 # ---------------------------------------------------------------------------
-find_package(Git QUIET)
-set(SONORA_GIT_DESCRIBE "unknown")
-if(GIT_FOUND AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/.git")
-  execute_process(
-    COMMAND "${GIT_EXECUTABLE}" describe --tags --always --dirty
-    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
-    OUTPUT_VARIABLE SONORA_GIT_DESCRIBE
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET)
-  if(NOT SONORA_GIT_DESCRIBE)
-    set(SONORA_GIT_DESCRIBE "unknown")
-  endif()
+# Every number here came out of cmake/Version.cmake, which read the git tag. The
+# line is printed rather than left implicit: a release that turns out to have
+# been built from an untagged or dirty tree is worth noticing before it is
+# published rather than after.
+if(SONORA_VERSION_IS_TAGGED)
+  message(STATUS "Sonora ${PROJECT_VERSION} (${SONORA_GIT_DESCRIBE}) -- release build")
+else()
+  message(STATUS "Sonora ${PROJECT_VERSION}+${SONORA_VERSION_TWEAK} (${SONORA_GIT_DESCRIBE})")
 endif()
-message(STATUS "Sonora ${PROJECT_VERSION} (${SONORA_GIT_DESCRIBE})")
+
+# The web UI: built by this build only when asked, checked for staleness when
+# not. See cmake/WebUI.cmake.
+include(WebUI)
+sonora_define_ui_target()
 
 enable_testing()
 

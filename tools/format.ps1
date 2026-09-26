@@ -21,31 +21,46 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# CI's format job installs the distribution's clang-format on ubuntu-latest,
-# which is 18. Different majors disagree about real cases -- a check that
-# passes here and fails there is worse than no check, so a mismatch is said out
-# loud rather than discovered in a pull request.
-$expectedMajor = 18
+# The formatter's version, exactly, and the same number as
+# CLANG_FORMAT_VERSION in .github/workflows/ci.yml -- which installs it from
+# pip rather than taking whatever the distribution ships, precisely so that
+# there is a number to match here.
+#
+# Only the major is compared: LLVM's formatting changes between majors and not
+# within one, so demanding 20.1.7 exactly would reject a perfectly good 20.1.8
+# and teach people to ignore the warning.
+$expectedVersion = '20.1.7'
+$expectedMajor = 20
 
 function Resolve-ClangFormat {
     $onPath = Get-Command clang-format -ErrorAction SilentlyContinue
     if ($onPath) { return $onPath.Source }
 
+    # Not on PATH is the normal case on Windows, not the exception: the Visual
+    # Studio C++ workload ships LLVM without adding it, and the standalone LLVM
+    # installer only adds it if you tick a box during setup. So this looks in
+    # the places installers actually put it.
+    $candidates = @()
+
     # vswhere is the one path Microsoft guarantees; everything else about a
     # Visual Studio installation is discovered through it.
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
-        $roots = & $vswhere -products * -latest -prerelease -property installationPath
-        foreach ($root in $roots) {
-            $candidates = @(
-                'VC\Tools\Llvm\x64\bin\clang-format.exe',
-                'VC\Tools\Llvm\bin\clang-format.exe'
-            )
-            foreach ($relative in $candidates) {
-                $candidate = Join-Path $root $relative
-                if (Test-Path $candidate) { return $candidate }
-            }
+        foreach ($root in (& $vswhere -products * -latest -prerelease -property installationPath)) {
+            $candidates += (Join-Path $root 'VC\Tools\Llvm\x64\bin\clang-format.exe')
+            $candidates += (Join-Path $root 'VC\Tools\Llvm\bin\clang-format.exe')
         }
+    }
+
+    # A standalone LLVM: machine-wide, 32-bit-on-64, per-user, and the shim
+    # directory winget keeps for packages it installed.
+    $candidates += (Join-Path $env:ProgramFiles 'LLVM\bin\clang-format.exe')
+    $candidates += (Join-Path ${env:ProgramFiles(x86)} 'LLVM\bin\clang-format.exe')
+    $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\LLVM\bin\clang-format.exe')
+    $candidates += (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\clang-format.exe')
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) { return $candidate }
     }
 
     return $null
@@ -54,16 +69,20 @@ function Resolve-ClangFormat {
 $clangFormat = Resolve-ClangFormat
 if (-not $clangFormat) {
     Write-Error @"
-clang-format not found, on PATH or in a Visual Studio installation.
+clang-format not found: not on PATH, not in a Visual Studio installation, and
+not in any of the usual LLVM install directories.
 Install it with 'winget install LLVM.LLVM', or add the C++ workload's
 'C++ Clang Compiler for Windows' component in the Visual Studio Installer.
 "@
 }
 
 $version = (& $clangFormat --version) -join ' '
+if (-not (Get-Command clang-format -ErrorAction SilentlyContinue)) {
+    Write-Host "clang-format: $clangFormat"
+}
 if ($version -match 'version (\d+)\.') {
     if ([int]$Matches[1] -ne $expectedMajor) {
-        Write-Warning "Using $version, CI uses clang-format $expectedMajor. Formatting differences between the two are this version's, not yours."
+        Write-Warning "Using $version, CI uses clang-format $expectedVersion. Formatting differences between the two are this version's, not yours."
     }
 }
 

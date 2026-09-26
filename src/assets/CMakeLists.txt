@@ -8,6 +8,10 @@
 include(EmbedAssets)
 sonora_embed_ui_assets(SONORA_EMBEDDED_ASSETS)
 
+# When the build is building the UI, the embedding step has to run after it.
+# When it is not, this is empty and nothing changes. See cmake/WebUI.cmake.
+sonora_ui_dependency(SONORA_UI_DEPENDENCY)
+
 add_library(sonora_assets STATIC
   src/asset_store.cpp
   "${SONORA_EMBEDDED_ASSETS}")
@@ -17,6 +21,10 @@ target_include_directories(sonora_assets PUBLIC
   "${CMAKE_CURRENT_LIST_DIR}/include")
 
 target_compile_features(sonora_assets PUBLIC cxx_std_20)
+
+if(SONORA_UI_DEPENDENCY)
+  add_dependencies(sonora_assets ${SONORA_UI_DEPENDENCY})
+endif()
 
 # Debug builds serve the UI from disk, so a UI change is a reload rather than a
 # C++ rebuild. Release builds have no such path and use the embedded table.

@@ -12,16 +12,41 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege by default. The release job in week 10's second half asks for
+# contents: write on its own, which is the one place it is needed.
+permissions:
+  contents: read
+
+env:
+  # The formatter's version, exactly, in one place.
+  #
+  # Not "whatever apt has": two clang-format majors disagree about real code,
+  # and a check that passes locally and fails in CI is worse than no check. The
+  # pip package publishes the LLVM binaries under an exact version, which is
+  # the only way to say the same number on Ubuntu, on Windows and in a
+  # container. tools/format.ps1 reads the same number and warns when the
+  # clang-format it found is a different major.
+  CLANG_FORMAT_VERSION: '20.1.7'
+  NODE_VERSION: '22'
+  # WiX v4. Unpinned, `dotnet tool install wix` takes v7, which will not build
+  # anything until somebody accepts a commercial licence -- see the note in
+  # tools/package.ps1.
+  WIX_VERSION: '4.*'
+
 jobs:
   format:
     name: clang-format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install clang-format
-        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install clang-format ${{ env.CLANG_FORMAT_VERSION }}
+        run: pip install "clang-format==${CLANG_FORMAT_VERSION}"
       - name: Check formatting
         run: |
+          clang-format --version
           mapfile -t files < <(find src tests -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' \))
           printf 'checking %d files\n' "${#files[@]}"
           clang-format --dry-run --Werror "${files[@]}"
@@ -33,7 +58,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
@@ -69,19 +94,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # git describe needs the full history and tags
+          # Both halves matter: the full history so `git describe` can find a
+          # tag, and the tags themselves, which a shallow checkout does not
+          # fetch even with depth 0 on some runner images.
+          fetch-depth: 0
+          fetch-tags: true
 
-      # The embedded asset table is generated from ui/dist at build time, and
-      # one of the tests checks it is real rather than empty.
+      # The UI is built by the build itself (-DSONORA_BUILD_UI=ON below), which
+      # is what makes "this binary contains the interface from this commit" a
+      # property rather than a hope. Node still has to be here for it, and the
+      # npm cache still pays for itself.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      - run: npm ci
-        working-directory: ui
-      - run: npm run build
-        working-directory: ui
 
       - name: Configure vcpkg environment (Unix)
         if: runner.os != 'Windows'
@@ -119,7 +146,7 @@ jobs:
         run: brew install ninja
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DSONORA_BUILD_UI=ON
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -136,3 +163,89 @@ jobs:
             build/**/CMakeFiles/CMakeConfigureLog.yaml
             build/**/vcpkg-manifest-install.log
           if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # The installer, and the release it is attached to
+  # ---------------------------------------------------------------------------
+  # Runs on a tag, and on a manual dispatch so the packaging path can be
+  # exercised without inventing a version. It does not run on every push: an
+  # MSI that nobody will install is fifteen minutes of a Windows runner.
+  package:
+    name: MSI
+    needs: [format, ui, build]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Configure vcpkg environment
+        shell: pwsh
+        run: |
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKG_DEFAULT_BINARY_CACHE=$env:GITHUB_WORKSPACE\.vcpkg-cache" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-cache" | Out-Null
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-Windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-Windows-
+
+      - name: Cache CEF
+        uses: actions/cache@v4
+        with:
+          path: third_party/cef
+          key: cef-Windows-${{ hashFiles('cmake/cef_version.cmake') }}
+
+      - name: Install WiX ${{ env.WIX_VERSION }}
+        run: dotnet tool install --global wix --version ${{ env.WIX_VERSION }}
+
+      # Not signed here. The certificate this repository can produce is
+      # self-signed, which is trusted by exactly one machine -- see
+      # tools/sign.ps1 -- and a signature nobody can verify is worse than none
+      # on a file other people download. The signing step belongs next to a
+      # real certificate in a key store, and this is where it would go.
+      - name: Build the MSI
+        shell: pwsh
+        run: ./tools/package.ps1
+
+      - name: Upload the MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonora-msi
+          path: build/packages/*.msi
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [package]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # The one job that writes anything. Everything else in this file runs with
+    # contents: read.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sonora-msi
+          path: artifacts
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.msi
+          # A draft, not a published release. The last look before something
+          # carries a version number in public is a person's, and there is
+          # nothing in this pipeline that can check what a release note says.
+          draft: true
+          generate_release_notes: true

@@ -1,9 +1,9 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "sonora",
-  "version": "0.3.0",
+  "$comment-version": "No version field: this manifest is consumed, never published, and the one version number in this repository comes from the git tag through cmake/Version.cmake. A second one here would be a second thing to forget.",
   "description": "Native C++ desktop shell hosting a web UI",
-  "homepage": "https://github.com/mariolizzio/sonora",
+  "homepage": "https://github.com/mar123io/sonora",
   "$comment-baseline": "No builtin-baseline on purpose: CI pins the vcpkg commit, local dev uses VCPKG_ROOT. Add a baseline in week 10 when release builds must be byte-reproducible.",
   "$comment-deps": "Keep this list minimal. drogon lands in week 11.",
   "$comment-miniaudio": "One header, two unrelated halves: the decoders (wav/flac/mp3, pure computation, used by src/audio) and the device backends (WASAPI/CoreAudio/ALSA, used by src/platform). It is the reason the platform layer needs no per-OS audio file.",
