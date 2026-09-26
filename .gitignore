@@ -6,6 +6,10 @@ CMakeUserPresets.json
 
 # vcpkg
 vcpkg_installed/
+# The registry checkout CI makes at the pinned baseline (see .github/workflows),
+# and the binary cache beside it. Both are build inputs, not sources.
+.vcpkg/
+.vcpkg-cache/
 
 # CEF binary distribution (provisioned by cmake/DownloadCEF.cmake)
 third_party/cef/

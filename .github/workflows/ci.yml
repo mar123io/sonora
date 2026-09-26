@@ -110,20 +110,79 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
-      - name: Configure vcpkg environment (Unix)
+      # vcpkg, ours, at the commit vcpkg.json pins -- not the clone the runner
+      # image ships.
+      #
+      # Two failures taught this, and the second explained the first. Fetching
+      # the baseline commit into the image's clone lets vcpkg read
+      # versions/baseline.json out of it, and that much worked; but the
+      # per-port version database is read from the working tree, which is still
+      # at whatever commit the image was built with. So baseline.json asked for
+      # sqlite3 3.53.4#1 and the tree next to it had never heard of it:
+      #
+      #   error: no version database entry for sqlite3 at 3.53.4#1
+      #
+      # There is no half-measure here. Having the registry a baseline describes
+      # means having the registry at that commit, which means owning the
+      # checkout. The cost is a clone on the first run of each baseline and a
+      # cache hit on every run after, and what it buys is the sentence this
+      # week exists to make true: the same tag produces the same binaries, on
+      # this machine and on a runner, today and in three years.
+      - name: vcpkg environment (Unix)
         if: runner.os != 'Windows'
         run: |
-          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          echo "VCPKG_ROOT=$GITHUB_WORKSPACE/.vcpkg" >> "$GITHUB_ENV"
           echo "VCPKG_DEFAULT_BINARY_CACHE=$GITHUB_WORKSPACE/.vcpkg-cache" >> "$GITHUB_ENV"
           mkdir -p "$GITHUB_WORKSPACE/.vcpkg-cache"
 
-      - name: Configure vcpkg environment (Windows)
+      - name: vcpkg environment (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKG_ROOT=$env:GITHUB_WORKSPACE\.vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "VCPKG_DEFAULT_BINARY_CACHE=$env:GITHUB_WORKSPACE\.vcpkg-cache" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-cache" | Out-Null
+
+      # Keyed on vcpkg.json, which is where the baseline lives: change the
+      # baseline and the key changes with it, which is exactly when a different
+      # registry is wanted.
+      - name: Cache the vcpkg checkout
+        uses: actions/cache@v4
+        with:
+          path: .vcpkg
+          key: vcpkg-tree-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Check out vcpkg at the baseline
+        shell: bash
+        run: |
+          set -eu
+          # grep rather than a JSON parser: the first forty hex characters in
+          # this file are the baseline, and the last attempt used python with
+          # $GITHUB_WORKSPACE interpolated into a string literal -- where
+          # "D:\a\sonora" became a bell character and a path nobody could read.
+          # A step that needs one value should not need an interpreter.
+          baseline=$(grep -o '[0-9a-f]\{40\}' vcpkg.json | head -n 1)
+          echo "baseline: $baseline"
+
+          # Relative paths throughout: bash starts in the workspace, and a
+          # Windows path with backslashes is the other thing that broke.
+          if [ ! -d .vcpkg/.git ]; then
+            git init -q .vcpkg
+            git -C .vcpkg remote add origin https://github.com/microsoft/vcpkg.git
+          fi
+          if ! git -C .vcpkg cat-file -e "$baseline^{commit}" 2>/dev/null; then
+            # One commit, no history: the version database is a tree, not a log.
+            git -C .vcpkg fetch --depth 1 origin "$baseline"
+          fi
+          git -C .vcpkg checkout -q --detach "$baseline"
+
+          if [ ! -x .vcpkg/vcpkg ] && [ ! -x .vcpkg/vcpkg.exe ]; then
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              ./.vcpkg/bootstrap-vcpkg.bat -disableMetrics
+            else
+              ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+            fi
+          fi
 
       - name: Cache vcpkg packages
         uses: actions/cache@v4
@@ -145,29 +204,6 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
-      # The baseline in vcpkg.json is a commit of the vcpkg registry, and the
-      # runner images carry their own clone of it -- each pinned to whatever
-      # commit was current when the image was built. Windows and Linux happened
-      # to have this one; macOS did not, and said so in four seconds:
-      #
-      #   path 'versions/baseline.json' exists on disk,
-      #   but not in '319504a5326aa870edde46438c5455fa76305a56'
-      #
-      # vcpkg does not fetch it itself, so this does. The alternative is to
-      # clone vcpkg at the exact baseline and stop using the image's copy,
-      # which is more reproducible and costs minutes per run; this keeps the
-      # image's clone and makes the pin work, which is the right trade until
-      # the day a release has to be rebuilt years from now.
-      - name: Fetch the vcpkg baseline
-        shell: bash
-        run: |
-          set -eu
-          cd "$VCPKG_ROOT"
-          # --unshallow fails on a complete clone, which is not an error here.
-          git fetch --unshallow origin 2>/dev/null || git fetch origin
-          baseline=$(python3 -c "import json;print(json.load(open('$GITHUB_WORKSPACE/vcpkg.json'))['builtin-baseline'])")
-          git cat-file -e "$baseline^{commit}"
-          echo "vcpkg baseline $baseline is available"
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} -DSONORA_BUILD_UI=ON
@@ -211,12 +247,37 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
-      - name: Configure vcpkg environment
+      # The same checkout as the matrix job above; see the note there.
+      - name: vcpkg environment
         shell: pwsh
         run: |
-          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKG_ROOT=$env:GITHUB_WORKSPACE\.vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "VCPKG_DEFAULT_BINARY_CACHE=$env:GITHUB_WORKSPACE\.vcpkg-cache" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-cache" | Out-Null
+
+      - name: Cache the vcpkg checkout
+        uses: actions/cache@v4
+        with:
+          path: .vcpkg
+          key: vcpkg-tree-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Check out vcpkg at the baseline
+        shell: bash
+        run: |
+          set -eu
+          baseline=$(grep -o '[0-9a-f]\{40\}' vcpkg.json | head -n 1)
+          echo "baseline: $baseline"
+          if [ ! -d .vcpkg/.git ]; then
+            git init -q .vcpkg
+            git -C .vcpkg remote add origin https://github.com/microsoft/vcpkg.git
+          fi
+          if ! git -C .vcpkg cat-file -e "$baseline^{commit}" 2>/dev/null; then
+            git -C .vcpkg fetch --depth 1 origin "$baseline"
+          fi
+          git -C .vcpkg checkout -q --detach "$baseline"
+          if [ ! -x .vcpkg/vcpkg.exe ]; then
+            ./.vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          fi
 
       - name: Cache vcpkg packages
         uses: actions/cache@v4
@@ -232,29 +293,6 @@ jobs:
           key: cef-Windows-${{ hashFiles('cmake/cef_version.cmake') }}
 
 
-      # The baseline in vcpkg.json is a commit of the vcpkg registry, and the
-      # runner images carry their own clone of it -- each pinned to whatever
-      # commit was current when the image was built. Windows and Linux happened
-      # to have this one; macOS did not, and said so in four seconds:
-      #
-      #   path 'versions/baseline.json' exists on disk,
-      #   but not in '319504a5326aa870edde46438c5455fa76305a56'
-      #
-      # vcpkg does not fetch it itself, so this does. The alternative is to
-      # clone vcpkg at the exact baseline and stop using the image's copy,
-      # which is more reproducible and costs minutes per run; this keeps the
-      # image's clone and makes the pin work, which is the right trade until
-      # the day a release has to be rebuilt years from now.
-      - name: Fetch the vcpkg baseline
-        shell: bash
-        run: |
-          set -eu
-          cd "$VCPKG_ROOT"
-          # --unshallow fails on a complete clone, which is not an error here.
-          git fetch --unshallow origin 2>/dev/null || git fetch origin
-          baseline=$(python3 -c "import json;print(json.load(open('$GITHUB_WORKSPACE/vcpkg.json'))['builtin-baseline'])")
-          git cat-file -e "$baseline^{commit}"
-          echo "vcpkg baseline $baseline is available"
 
       - name: Install WiX ${{ env.WIX_VERSION }}
         run: dotnet tool install --global wix --version ${{ env.WIX_VERSION }}
