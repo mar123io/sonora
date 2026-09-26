@@ -925,3 +925,162 @@ morto.
 - **`localhost:9222` resta bianco** (settimana 4), **la sandbox resta spenta**
   (ADR 0003, settimana 10), e i **10 minuti continui senza underrun** non li ho
   ancora misurati (settimana 5).
+
+---
+
+## Settimana 9 — Integrazione shell
+
+**Pianificata:** 16-22 nov 2026 · **Effettiva:** 26 set 2026
+**Stima:** 8 h · **Effettivo:** ___ h
+**Tag:** `v0.4-native`
+
+### Obiettivo
+
+Far esistere Sonora fuori dalla propria finestra: tray con menu, pulsanti sotto
+l'anteprima della taskbar, jump list, una sola istanza per sessione, i link
+`sonora://` dal browser, e la finestra che si riapre dove l'avevi lasciata.
+
+### Fatto
+
+- [x] `core::ParseDeepLink`: parser totale, solo cifre, nessun percent-decoding — 13 casi
+- [x] `core::ResolvePlacement`: monitor scomparso, finestra fuori schermo, DPI misti — 16 casi
+- [x] **`sonora::state`, il secondo store** (ADR 0008): id durevoli, `synchronous = FULL` — 13 casi
+- [x] Interfacce `displays`, `shell_integration`, `single_instance`, `url_scheme` + stub portabili
+- [x] Win32: tray con menu, thumbnail toolbar, jump list, mutex + `WM_COPYDATA`, registrazione in HKCU
+- [x] Le tre icone dei pulsanti disegnate pixel per pixel, non spedite come file
+- [x] Ripristino di posizione, dimensione e stato massimizzato, in coordinate workspace
+- [x] AppUserModelID esplicito — rimesso, ora che qualcosa lo registra davvero
+- [x] 122 asserzioni in 42 casi, pulite sotto ASan e UBSan, verificate anche per mutazione
+
+### Cosa è costato più del previsto
+
+**1. L'`ALTER TABLE` che non ho scritto.** La jump list mostra gli album
+riprodotti di recente, e "di recente" non è un fatto che sta in un file: nessuna
+riscansione lo ricostruisce. La mossa ovvia era una colonna `last_played_at`
+sulla tabella dei brani — una riga, l'indice era già lì.
+
+Poi ho riletto l'ADR 0007, che dice testualmente: *«Playlist, voti e conteggi di
+riproduzione hanno bisogno di un altro store, con durabilità vera e migrazioni
+vere, e non stanno in `src/library/`. La settimana 9 traccia quel confine.»*
+Quella riga avrebbe abrogato l'ADR in silenzio: da lì in poi cancellare l'indice
+non sarebbe più stato un evento recuperabile, e `synchronous = NORMAL`, le
+migrazioni che possono buttare tutto e il messaggio che invita a cancellare la
+cache sarebbero diventati falsi senza che niente nel codice lo dicesse.
+
+E non era solo una questione di principio, che è la parte che non mi aspettavo.
+Gli id dell'indice vengono riassegnati a ogni ricostruzione, e le voci della jump
+list sono URL che **Windows ci restituisce settimane dopo**. Un
+`sonora://track/412` con un id della cache avrebbe suonato una canzone a marzo e
+un'altra ad aprile, sbagliando in silenzio: parte qualcosa, solo non quello che
+hai cliccato. Il confine dell'ADR 0007 e la correttezza dei deep link sono la
+stessa cosa vista da due lati.
+
+**2. Tre bug al primo avvio su Windows, e due erano vecchi.**
+
+- **La UI non riempiva la finestra ripristinata — bug della settimana 2, latente
+  per sette settimane.** `main.cpp` calcolava la dimensione iniziale della vista
+  del browser dalla dimensione *richiesta* (`desc.width_dip * scale`) invece che
+  dalla finestra effettivamente creata. Finché la finestra si apriva sempre alla
+  dimensione di default i due numeri coincidevano per costruzione, e CEF viene
+  ridimensionato solo da `WM_SIZE` — che non arriva mai, se la finestra si apre
+  già alla sua dimensione finale.
+
+- **L'istanza singola non funzionava, e il log lo diceva per omissione.** Ho
+  passato un giro a sospettare `FindWindowEx(HWND_MESSAGE, ...)` e a sostituirlo
+  con un handoff deterministico. Poi ho guardato meglio l'output e ho notato che
+  la riga `no listener after 40 attempts` **non c'era**: il messaggio era stato
+  trovato, mandato e rifiutato. Il colpevole era mio, tre righe più in là:
+
+  ```cpp
+  if (payload->lpData == nullptr || payload->cbData == 0 || ...) return 0;
+  ```
+
+  Un rilancio senza argomenti produce un payload vuoto, e io lo scartavo come
+  malformato. Ma un rilancio senza argomenti è **l'attivazione più comune che
+  esista** — qualcuno ha fatto doppio clic su Sonora mentre Sonora era già
+  aperto, e quello che chiede è la finestra che ha già.
+
+- **LeakSanitizer ha trovato un costruttore che lancia senza distruttore.**
+  `Library::Library` apre la connessione e poi migra; se la migrazione rifiuta un
+  file scritto da una versione più nuova, l'eccezione esce dal costruttore e il
+  distruttore non viene chiamato mai. La connessione restava aperta per tutta la
+  vita del processo, tenendo un lock sul file che l'utente era appena stato
+  invitato ad andare a guardare. Presente dalla settimana 7.
+
+**3. La finestra Chromium vagante.** Quando il secondo processo concludeva che
+il primo non rispondeva, proseguiva come un avvio normale — e CEF trovava la
+user-data-dir già bloccata. Chromium non fallisce, in quel caso: decide che gli
+stai chiedendo di aprire una scheda in una sessione esistente e ti mette in
+faccia un browser. Mezz'ora spesa a capire da dove venisse una finestra di
+Google.
+
+### Cosa ho imparato
+
+- **Un ADR scritto bene ti dice cosa fare due mesi dopo.** L'ADR 0007 conteneva
+  già la frase che ha deciso questa settimana, scritta quando il problema non
+  esisteva ancora. Non è documentazione: è una decisione che continua a
+  funzionare mentre non la guardi.
+- **Un identificatore che esce dal processo deve sopravvivere a tutto quello che
+  succede dentro.** Una voce della jump list registrata con Windows sopravvive al
+  processo, all'indice e a tre release. Se il numero che contiene viene
+  riassegnato, il bug non è un errore: è una canzone sbagliata.
+- **Una riga di log che non compare è un'informazione.** Cercavo la causa dove
+  avrei dovuto vedere un messaggio e non lo vedevo, e quello era il messaggio.
+- **Un bug latente non è un bug nuovo.** La settimana 9 non ha rotto la UI: ha
+  smesso di garantire la coincidenza che la teneva in piedi. Una funzionalità che
+  "rompe" qualcosa spesso non fa altro che rimuovere un'ipotesi che nessuno aveva
+  scritto — e la correzione giusta non è ripristinare l'ipotesi, è chiedere alla
+  finestra quanto è grande invece di dedurlo.
+- **Coordinate workspace non sono coordinate schermo.** `GetWindowPlacement`
+  restituisce `rcNormalPosition` in coordinate dell'area di lavoro, che
+  coincidono con quelle dello schermo solo se la taskbar non è in alto né a
+  sinistra. La correzione è zero sulla maggior parte delle macchine, ed è
+  esattamente per questo che si dimentica.
+- **Il claim viene preso prima che l'ascoltatore esista**, e quella finestra di
+  corsa è reale: un lancio che ci cade dentro trova un mutex con nessuno dietro.
+  Ritentare per due secondi è la lettura onesta di quello stato ("la prima copia
+  sta ancora partendo"), arrendersi subito non lo è.
+- **Un'API che cerca per nome non ti dice quale dei nomi non corrisponde.**
+  `FindWindowEx` per classe e titolo ha tre cose che devono coincidere e, quando
+  fallisce, un solo modo di dirlo. Un handle scritto dal processo che lo possiede
+  non ne ha nessuna: o la pagina condivisa c'è o non c'è.
+- **Le tre maniere di fallire vanno distinte nel codice, non nella testa.**
+  "Nessun ascoltatore", "non risponde in tempo" e "ha risposto di no" erano lo
+  stesso `return false`, e mi sono costate il giro sbagliato.
+- **Disegnare le icone nel codice vale anche per tre triangoli.** GDI non ha
+  opinioni sul canale alfa, quindi i pixel sono scritti a mano nel DIB: è più
+  corto della spiegazione di perché un'icona con l'alfa sbagliato diventa un
+  quadrato nero sull'anteprima scura della taskbar.
+- **Mutare il codice per vedere i test fallire è economico.** Quattro mutazioni
+  (scegliere il monitor dall'angolo invece che dall'area, togliere
+  `AUTOINCREMENT`, togliere il `MAX()` sul timestamp, ignorare uno schema dal
+  futuro) e ognuna fa cadere esattamente il test scritto per lei. È il modo più
+  rapido che conosco di distinguere un test da un'asserzione decorativa.
+
+### Da riprendere
+
+- **Il monitor staccato non l'ho provato davvero.** La policy ha il caso coperto
+  da un test, l'hardware no: chiudere con la finestra sul monitor esterno,
+  staccarlo e riaprire è una prova di trenta secondi che non ho fatto.
+- **La jump list dipende ancora dal collegamento installato.** È registrata
+  sotto l'AppUserModelID, e senza una scorciatoia che lo porti la shell la
+  mostra solo finché Sonora è in esecuzione — stessa conclusione della settimana
+  8, stesso rimedio: l'MSI della settimana 10.
+- **`Forget()` esiste e non lo chiama nessuno.** Lo store durevole non dimentica
+  mai un percorso, quindi cresce di una riga per file riprodotto e non torna mai
+  indietro. È deliberato — un disco esterno scollegato non è un file cancellato —
+  ma va deciso da qualcuno, prima o poi.
+- **macOS non ha niente di tutto questo**: nessuno status-bar item, nessun menu
+  del Dock, nessuna registrazione in Launch Services. Gli stub lo dicono
+  all'avvio invece di lasciarlo scoprire.
+- **`Statement`, `Execute` e `Transaction` esistono due volte**, in `library` e
+  in `state`. Deliberato (ADR 0008), e comunque una cosa da rileggere fra un
+  mese con occhi nuovi.
+- **Il build non compila la UI**, **due istanze condividevano `library.sqlite`**
+  (adesso non più, ed è un effetto collaterale gradito dell'istanza singola),
+  **le copertine arrivano solo dai tag**, **i file OneDrive non sono mai stati
+  provati** e **la matrice CI non l'ho ancora letta** — quattro voci ereditate,
+  tutte ancora vere.
+- **`localhost:9222` resta bianco** (settimana 4), **la sandbox resta spenta**
+  (ADR 0003, settimana 10), e i **10 minuti continui senza underrun** non li ho
+  ancora misurati (settimana 5).

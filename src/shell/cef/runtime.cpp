@@ -12,6 +12,7 @@
 
 #include "cef/app.h"
 #include "cef/client.h"
+#include "cef/desktop.h"
 #include "cef/event_channel.h"
 #include "cef/handlers.h"
 #include "cef/library_host.h"
@@ -35,6 +36,7 @@ std::unique_ptr<EventChannel> g_events;
 std::unique_ptr<PlayerHost> g_player;
 std::unique_ptr<LibraryHost> g_library;
 std::unique_ptr<ShellMediaSession> g_media;
+std::unique_ptr<DesktopIntegration> g_desktop;
 std::unique_ptr<ShellHandlers> g_handlers;
 CefRefPtr<ShellTimer> g_heartbeat;
 bool g_initialized = false;
@@ -188,6 +190,28 @@ bool StartCef(const RuntimeConfig& config) {
     std::fprintf(stderr, "media: %s\n", g_media->description().c_str());
   }
 
+  // The tray, the taskbar's thumbnail buttons and the jump list, plus the
+  // durable store they are built on. After the media session because it wants
+  // the same window and the same player, and because when two things fail the
+  // log reads better in a fixed order.
+  g_desktop = std::make_unique<DesktopIntegration>(*g_player, *g_library);
+  DesktopIntegration::Callbacks callbacks;
+  callbacks.raise_window = config.raise_window;
+  callbacks.quit = config.quit;
+  if (g_desktop->Start(config.parent_window, config.state_path, std::move(callbacks))) {
+    std::printf("desktop: %s\n", g_desktop->description().c_str());
+  } else {
+    std::fprintf(stderr, "desktop: unavailable, no tray and no jump list\n");
+    g_desktop.reset();
+  }
+
+  // A sonora:// link this process was launched with. Posted rather than run
+  // here: the player is ready, but acting on it before the loop has turned
+  // would mean the window is not on screen yet when it starts playing.
+  if (!config.arguments.empty()) {
+    ActivateWithArguments(config.arguments);
+  }
+
   // A scan asked for on the command line starts here, after the event channel
   // exists -- otherwise its progress would be posted at a sink that is not there
   // yet and the first thing the page saw would be a finished scan.
@@ -251,10 +275,17 @@ void StopCef() {
   if (g_media) {
     g_media->Stop();
   }
+  // And the same again for the tray: an icon left in the notification area
+  // after the process is gone is the classic Windows ghost, and it stays there
+  // until somebody waves the mouse over it.
+  if (g_desktop) {
+    g_desktop->Stop();
+  }
   platform::SetWorkCallback(nullptr);
   g_app = nullptr;
   CefShutdown();
   g_handlers.reset();
+  g_desktop.reset();
   g_media.reset();
   g_library.reset();
   g_player.reset();
@@ -270,6 +301,12 @@ void* BrowserViewHandle() {
   }
   CefRefPtr<SonoraClient> client = g_app->client();
   return client ? client->BrowserViewHandle() : nullptr;
+}
+
+void ActivateWithArguments(const std::vector<std::string>& arguments) {
+  if (g_desktop) {
+    g_desktop->Activate(arguments);
+  }
 }
 
 bool RequestBrowserClose() {

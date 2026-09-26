@@ -23,6 +23,10 @@ if(WIN32)
     win/paths_win32.cpp
     win/arguments_win32.cpp
     win/media_integration_win32.cpp
+    win/displays_win32.cpp
+    win/shell_integration_win32.cpp
+    win/single_instance_win32.cpp
+    win/url_scheme_win32.cpp
     win/entry_win32.cpp)
   # dwmapi: dark title bar. shcore is not needed, per-monitor v2 awareness comes
   # from the application manifest (see src/shell/sonora.manifest).
@@ -35,7 +39,11 @@ if(WIN32)
   # propsys and shlwapi: the window's property store, which is where an
   # unpackaged application tells the shell its name and icon. See
   # ConfigureShellIdentity in win/window_win32.cpp.
-  target_link_libraries(sonora_platform PRIVATE dwmapi shell32 propsys shlwapi WindowsApp)
+  # comctl32: SetWindowSubclass, which is how the shell integration sees the
+  # application window's messages without window_win32.cpp knowing it exists.
+  # advapi32: the registry, for the sonora:// scheme.
+  target_link_libraries(sonora_platform PRIVATE
+    dwmapi shell32 propsys shlwapi comctl32 advapi32 WindowsApp)
 
 elseif(APPLE)
   set(sonora_platform_mac_sources
@@ -46,6 +54,14 @@ elseif(APPLE)
     mac/arguments_mac.mm
     mac/media_integration_mac.mm)
   target_sources(sonora_platform PRIVATE ${sonora_platform_mac_sources})
+  # No status-bar item, no Dock menu and no Launch Services registration yet:
+  # those are a week of their own, and shared/ says so out loud rather than
+  # leaving three undefined symbols.
+  target_sources(sonora_platform PRIVATE
+    shared/displays_none.cpp
+    shared/shell_integration_none.cpp
+    shared/single_instance_none.cpp
+    shared/url_scheme_none.cpp)
   set_source_files_properties(${sonora_platform_mac_sources}
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   # MediaPlayer: MPNowPlayingInfoCenter and MPRemoteCommandCenter. Compiled by
@@ -67,5 +83,9 @@ else()
     linux/child_window_stub.cpp
     linux/paths_stub.cpp
     linux/arguments_stub.cpp
-    linux/media_integration_stub.cpp)
+    linux/media_integration_stub.cpp
+    shared/displays_none.cpp
+    shared/shell_integration_none.cpp
+    shared/single_instance_none.cpp
+    shared/url_scheme_none.cpp)
 endif()

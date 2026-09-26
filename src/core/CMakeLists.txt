@@ -9,8 +9,10 @@ configure_file(
   @ONLY)
 
 add_library(sonora_core STATIC
+  src/deep_link.cpp
   src/media_session.cpp
-  src/playback_state.cpp)
+  src/playback_state.cpp
+  src/window_placement.cpp)
 add_library(sonora::core ALIAS sonora_core)
 
 target_include_directories(sonora_core PUBLIC

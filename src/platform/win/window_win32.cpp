@@ -17,6 +17,8 @@
 
 #include <sonora/platform/event_loop.h>
 
+#include "app_identity.h"
+
 #include <cstdio>
 #include <string>
 #include <utility>
@@ -30,17 +32,6 @@ constexpr UINT kDefaultDpi = 96;
 // DWMWA_USE_IMMERSIVE_DARK_MODE. Declared by name only since Windows 10 20H1
 // SDKs; using the literal keeps this compiling against older SDKs too.
 constexpr DWORD kDwmUseImmersiveDarkMode = 20;
-
-// Who this program is, as far as the Windows shell is concerned.
-//
-// It is a made-up string and it only has to be stable and unique: the shell
-// uses it to group taskbar buttons, to find a jump list (week 9), and to look
-// up what to call the application. The form is the documented one,
-// CompanyName.ProductName.
-// Unused today, on purpose: see ConfigureShellIdentity. Week 9's jump list and
-// week 10's installer both need this exact string, and writing it down once,
-// here, is what stops the two from disagreeing later.
-[[maybe_unused]] constexpr wchar_t kAppUserModelId[] = L"MarioLizzio.Sonora";
 
 // The string resource in sonora.rc that holds the application's name, and the
 // icon resource beside it. Referenced indirectly, by id, because that is what
@@ -63,6 +54,20 @@ std::wstring Widen(const std::string& utf8) {
 
 int ScaleForDpi(int value_dip, UINT dpi) {
   return ::MulDiv(value_dip, static_cast<int>(dpi), static_cast<int>(kDefaultDpi));
+}
+
+// What has to be added to a workspace coordinate to get a screen coordinate:
+// the origin of the primary display's work area. Zero unless the taskbar is at
+// the top or on the left.
+[[nodiscard]] POINT WorkspaceOrigin() {
+  MONITORINFO info{};
+  info.cbSize = sizeof(info);
+  const POINT anywhere_on_the_primary{0, 0};
+  HMONITOR primary = ::MonitorFromPoint(anywhere_on_the_primary, MONITOR_DEFAULTTOPRIMARY);
+  if (primary == nullptr || ::GetMonitorInfoW(primary, &info) == 0) {
+    return POINT{0, 0};
+  }
+  return POINT{info.rcWork.left, info.rcWork.top};
 }
 
 [[nodiscard]] std::wstring ExecutablePathW() {
@@ -220,6 +225,10 @@ void ConfigureShellIdentity(HWND hwnd) {
 class Win32Window final : public Window {
  public:
   explicit Win32Window(const WindowDesc& desc) : desc_(desc) {
+    // First, and before the class is registered or the window exists: the
+    // taskbar button is created from this identity, and an id set afterwards
+    // groups the button under whatever the shell guessed. See app_identity.h.
+    SetProcessAppUserModelId();
     RegisterWindowClass();
 
     // The window is created at the *system* dpi and then corrected by the
@@ -231,15 +240,34 @@ class Win32Window final : public Window {
     const DWORD style = WS_OVERLAPPEDWINDOW;
     ::AdjustWindowRectExForDpi(&rect, style, FALSE, 0, dpi);
 
+    int x = CW_USEDEFAULT;
+    int y = CW_USEDEFAULT;
+    int width = rect.right - rect.left;
+    int height = rect.bottom - rect.top;
+
+    if (desc.placement.has_value()) {
+      // The saved rectangle is the whole window, frame included: it came from
+      // GetWindowPlacement, which reports the same thing CreateWindowEx takes.
+      // No AdjustWindowRect here, and that asymmetry with the branch above is
+      // the point -- the default size is a client area, the remembered one is
+      // not, and conflating them shrinks the window by the height of its title
+      // bar once per restart.
+      const core::Rect& bounds = desc.placement->bounds;
+      x = bounds.x;
+      y = bounds.y;
+      width = bounds.width;
+      height = bounds.height;
+    }
+
     hwnd_ =
-        ::CreateWindowExW(0, kWindowClassName, Widen(desc.title).c_str(), style, CW_USEDEFAULT,
-                          CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top,
-                          nullptr, nullptr, ::GetModuleHandleW(nullptr), this);
+        ::CreateWindowExW(0, kWindowClassName, Widen(desc.title).c_str(), style, x, y, width,
+                          height, nullptr, nullptr, ::GetModuleHandleW(nullptr), this);
     if (hwnd_ == nullptr) {
       return;
     }
 
     dpi_ = ::GetDpiForWindow(hwnd_);
+    maximize_on_show_ = desc.placement.has_value() && desc.placement->maximized;
     ApplyDarkTitleBar();
     ConfigureShellIdentity(hwnd_);
   }
@@ -254,7 +282,10 @@ class Win32Window final : public Window {
 
   void Show() override {
     if (hwnd_ != nullptr) {
-      ::ShowWindow(hwnd_, SW_SHOW);
+      // SW_SHOWMAXIMIZED in the same call rather than a show followed by a
+      // maximize: the second form draws the window once at its restored size
+      // and once maximized, and the flash is visible.
+      ::ShowWindow(hwnd_, maximize_on_show_ ? SW_SHOWMAXIMIZED : SW_SHOW);
       ::UpdateWindow(hwnd_);
     }
   }
@@ -266,7 +297,46 @@ class Win32Window final : public Window {
     }
   }
 
+  void Raise() override {
+    if (hwnd_ == nullptr) {
+      return;
+    }
+    // SW_RESTORE only when it is actually minimised: on a window that is
+    // maximized, SW_RESTORE un-maximizes it, which is not what anybody clicking
+    // a link asked for.
+    if (::IsIconic(hwnd_)) {
+      ::ShowWindow(hwnd_, SW_RESTORE);
+    } else {
+      ::ShowWindow(hwnd_, SW_SHOW);
+    }
+
+    // SetForegroundWindow is allowed to refuse. Windows only grants the
+    // foreground to a process the user is interacting with, which is what stops
+    // a background program from stealing focus mid-sentence -- and this call
+    // comes from exactly the situation the rule was written for: another
+    // process (the browser, or a second copy of Sonora) is in the foreground
+    // and we are not. It usually succeeds anyway, because the launching process
+    // passes its right along; when it does not, FlashWindowEx is the documented
+    // way to ask for attention instead of demanding it.
+    if (::SetForegroundWindow(hwnd_) == 0) {
+      FLASHWINFO flash{};
+      flash.cbSize = sizeof(flash);
+      flash.hwnd = hwnd_;
+      flash.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
+      ::FlashWindowEx(&flash);
+    }
+  }
+
   void* native_handle() const noexcept override { return hwnd_; }
+
+  SizePx client_size() const noexcept override {
+    RECT client{};
+    if (hwnd_ == nullptr || ::GetClientRect(hwnd_, &client) == 0) {
+      return SizePx{};
+    }
+    return SizePx{static_cast<int>(client.right - client.left),
+                  static_cast<int>(client.bottom - client.top)};
+  }
 
   float scale_factor() const noexcept override {
     return static_cast<float>(dpi_) / static_cast<float>(kDefaultDpi);
@@ -276,6 +346,40 @@ class Win32Window final : public Window {
 
   void SetOnResize(std::function<void(int, int)> handler) override {
     on_resize_ = std::move(handler);
+  }
+
+  core::SavedPlacement SavedPlacement() const override {
+    core::SavedPlacement saved;
+    saved.scale = scale_factor();
+    if (hwnd_ == nullptr) {
+      return saved;
+    }
+
+    WINDOWPLACEMENT placement{};
+    placement.length = sizeof(placement);
+    if (::GetWindowPlacement(hwnd_, &placement) == 0) {
+      return saved;
+    }
+
+    // rcNormalPosition is the restored rectangle, which Windows keeps updated
+    // even while the window is maximized. Reading the live bounds instead would
+    // save the screen's size, and un-maximizing after a restart would give a
+    // window the size of the monitor it was last maximized on.
+    //
+    // And it is in *workspace* coordinates, not screen coordinates. The two
+    // differ by the origin of the primary display's work area, which is (0, 0)
+    // for a taskbar at the bottom or the right -- so this correction is zero on
+    // most machines and is exactly why it gets left out. Move the taskbar to
+    // the top and a window saved without it climbs by the taskbar's height at
+    // every restart.
+    const POINT origin = WorkspaceOrigin();
+    const RECT& normal = placement.rcNormalPosition;
+    saved.bounds = core::Rect{static_cast<int>(normal.left + origin.x),
+                              static_cast<int>(normal.top + origin.y),
+                              static_cast<int>(normal.right - normal.left),
+                              static_cast<int>(normal.bottom - normal.top)};
+    saved.maximized = placement.showCmd == SW_SHOWMAXIMIZED;
+    return saved;
   }
 
  private:
@@ -403,6 +507,7 @@ class Win32Window final : public Window {
   WindowDesc desc_;
   HWND hwnd_ = nullptr;
   UINT dpi_ = kDefaultDpi;
+  bool maximize_on_show_ = false;
   std::function<void()> on_close_;
   std::function<void(int, int)> on_resize_;
 };

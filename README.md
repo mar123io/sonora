@@ -8,13 +8,14 @@ Sonora is built the way large desktop applications actually are: a native core
 that owns audio and platform integration, a web layer that owns the interface,
 and a versioned bridge between them so the two can ship independently.
 
-> **Status: week 8 of 13.** The shell hosts a Chromium view, serves the UI over
+> **Status: week 9 of 13.** The shell hosts a Chromium view, serves the UI over
 > a custom `sonora://` scheme, and the two talk over a typed, versioned bridge
 > generated from one schema. It plays music — a searchable library, a queue, and
 > a gapless join between two tracks performed inside the device callback — and
-> the operating system knows about it: Windows' media panel shows the track and
-> its cover, and the keyboard's media keys work with the window minimised. See
-> [ROADMAP.md](ROADMAP.md) for what lands when.
+> it behaves like a desktop application: the media panel and the media keys, a
+> tray icon, taskbar thumbnail buttons, a jump list, one instance per session,
+> `sonora://` links from the browser, and a window that reopens where you left
+> it. See [ROADMAP.md](ROADMAP.md) for what lands when.
 
 ---
 
@@ -42,10 +43,15 @@ and a versioned bridge between them so the two can ship independently.
 | Playback state machine, media-session policy, asset store, bridge protocol, capabilities, coalescer, ring buffer, engine — unit tested | working |
 | Platform abstraction, macOS backend (window + media, `MPNowPlayingInfoCenter`) | written, compiled in CI, **not tested on hardware** |
 | Platform abstraction, Linux backend | stub; fails with a clear message at runtime |
+| Tray icon with menu, taskbar thumbnail buttons | working |
+| Jump list of recently played albums | working (see the note on shortcuts below) |
+| Single instance: a second launch hands its arguments over and exits | working |
+| `sonora://track/<id>` and `sonora://album/<id>` from the browser | working |
+| Window position, size and maximized state restored across restarts | working |
+| Durable store: play history and the stable ids links are made of ([ADR 0008](docs/adr/0008-two-stores-with-opposite-policies.md)) | working |
 | The media panel's *application name* | needs an installed shortcut — see below |
 
-| Tray icon, jump list, single instance, protocol handler | week 9 |
-| MSI packaging, CI matrix | week 10 |
+| MSI packaging, CI matrix, signing | week 10 |
 | Delta updater with signature + rollback | week 11 |
 | Staged rollout, crash reporting, perf gates | week 12 |
 
@@ -239,6 +245,57 @@ written and compiles in CI, and **has never run**: no Mac has executed a line of
 it. The file says so at the top, and names the three parts most likely to be
 wrong. Linux is a stub that fails with a clear message.
 
+### Links, the tray and one instance
+
+A second launch does not start a second Sonora. It hands its command line to the
+one that is already running, raises that window, and exits — which is also what
+makes a `sonora://` link from a browser open the player you already have rather
+than a new one:
+
+```powershell
+start sonora://album/1     # play that album in the running copy
+start sonora://track/7     # play that track
+```
+
+The scheme is registered for the current user at every start, pointing at the
+executable that is running, so a rebuilt Sonora takes the links over from the
+previous build instead of sending them to it.
+
+The ids in those URLs are **durable ids**, issued by the second store
+(`state.sqlite`), and that is not an implementation detail: the library index is
+a cache whose row ids are reassigned every time it is rebuilt, while a jump-list
+entry registered with Windows outlives the process, the index and several
+releases. A URL carrying an index id would mean a different song after the next
+rescan, silently. [ADR 0008](docs/adr/0008-two-stores-with-opposite-policies.md)
+is the whole argument; the short version is that the two stores have opposite
+policies and the boundary between them is the file path.
+
+What the URL can say is one decimal number and nothing else: no percent-decoding,
+no second path segment, no id that does not fit in an `int64`. It arrives from
+outside the process — anyone can put a link in a web page — and it still has to
+exist in the durable store, and then in the index, before anything happens.
+
+The tray icon carries play/pause, previous, next and quit; the same four commands
+are under the taskbar preview, on three buttons drawn by the code that installs
+them. The jump list shows the last eight albums played.
+
+**The jump list and the installed shortcut:** like the media panel's name (above),
+a jump list is stored per AppUserModelID, and the shell takes that identity
+seriously only when something registers it. Sonora claims the id
+(`MarioLizzio.Sonora`, in `src/platform/win/app_identity.h`), which is enough for
+the list to appear while it is running; week 10's installer writes the Start Menu
+shortcut that carries the same id, and that is what makes it persist.
+
+### Where the window opens
+
+Position, size and maximized state are remembered in a one-line file next to the
+two databases, and the rule when reopening is one the tests are written against:
+**the window always ends up entirely inside some display's work area.** A monitor
+that was unplugged, a laptop undocked, a resolution that shrank, a settings file
+edited by hand — none of them can put the window somewhere unreachable. Moving
+between displays of different scale keeps its physical size rather than its pixel
+count.
+
 ### Working on the UI
 
 Debug builds serve the UI from `ui/dist` on disk, so a UI change is a reload
@@ -282,11 +339,12 @@ check that passes locally and fails in CI is worse than no check.
 ## Layout
 
 ```
-src/core/        playback state, media-session policy — no OS, no screen, no sound card
+src/core/        playback state, media-session policy, deep links, window placement — no OS
+src/state/       the durable store: play history and stable ids (ADR 0008)
 src/audio/       ring buffer, decoders, engine — no OS, no CEF, no device
 src/assets/      the web bundle as bytes: embedded table + the two stores that serve it
 src/bridge/      the native<->web protocol: envelope, errors, generated dispatch — no CEF
-src/platform/    iface/ + win/ + mac/ + linux/ — the only place #ifdef on the OS is allowed
+src/platform/    iface/ + win/ + mac/ + linux/ + shared/ — the only place #ifdef on the OS is allowed
 src/shell/       the executable: window, CEF host, scheme handler, helper process
 ui/              the web interface (TypeScript + Vite)
 tests/           Catch2, runs against core and assets on every platform
@@ -312,6 +370,9 @@ Three decisions shape the rest:
   callback allocates nothing, locks nothing and logs nothing, which is the exact
   opposite of the bridge's policy and deliberately so: each belongs to the
   thread it was written for.
+- [ADR 0008](docs/adr/0008-two-stores-with-opposite-policies.md) — what the user
+  did lives in a different store from what their files say, with the opposite
+  durability policy, and the boundary between the two is the file path.
 - [ADR 0005](docs/adr/0005-events-are-pushed-and-coalesced.md) — events are
   pushed by the shell rather than carried on a persistent query, and the rate
   limiting that decides what the page sees lives in the portable target where it

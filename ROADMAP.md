@@ -252,15 +252,23 @@ della settimana 10. Da un collegamento dice "Sonora". Vedi README e diario.
 
 #### Settimana 9 — Integrazione shell (8h)
 
-- [ ] `IPlatformShell`: tray icon con menu contestuale (play/pausa/esci)
-- [ ] Jump list con gli ultimi album riprodotti
-- [ ] Thumbnail toolbar sui pulsanti della taskbar
-- [ ] Single-instance: la seconda istanza passa gli argomenti alla prima e termina
-- [ ] Protocol handler `sonora://track/<id>` registrato, apre l'app e riproduce
-- [ ] Ripristino di posizione/dimensione finestra, gestione multi-monitor con DPI misti
+- [x] `IPlatformShell`: tray icon con menu contestuale (play/pausa/esci)
+- [x] Jump list con gli ultimi album riprodotti
+- [x] Thumbnail toolbar sui pulsanti della taskbar
+- [x] Single-instance: la seconda istanza passa gli argomenti alla prima e termina
+- [x] Protocol handler `sonora://track/<id>` registrato, apre l'app e riproduce
+- [x] Ripristino di posizione/dimensione finestra, gestione multi-monitor con DPI misti
 
 **Completato quando:** doppio click su un `.sonora` link da browser apre l'app già in
 esecuzione sulla traccia giusta; l'app si comporta bene spostandola tra due monitor a DPI diversi.
+
+**Verificato il 26 set 2026**, con un'eccezione dichiarata: il monitor staccato fra una
+chiusura e la riapertura è coperto da un test della policy ma non è stato provato a mano.
+La jump list dipende dal collegamento installato, come il nome nel pannello multimediale
+della settimana 8 — si chiude con l'MSI della settimana 10.
+
+**→ ADR #8: "Due store con politiche opposte"** (l'ADR #2 sulla piattaforma esiste dalla
+settimana 1; questa settimana ne ha prodotto uno che non era previsto qui).
 
 **→ ADR #2: "Come isolare le differenze di piattaforma senza #ifdef sparsi".**
 **→ Commit taggato `v0.4-native`.**

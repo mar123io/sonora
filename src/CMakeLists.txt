@@ -5,6 +5,9 @@ add_subdirectory(bridge)
 # links this target for miniaudio.
 add_subdirectory(audio)
 add_subdirectory(library)
+# The durable store, which is a different kind of thing from the index next to
+# it -- see ADR 0008.
+add_subdirectory(state)
 add_subdirectory(platform)
 
 # The shell is the only target that needs CEF, so it is also the only one the

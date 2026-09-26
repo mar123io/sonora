@@ -1,7 +1,9 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <string>
+#include <vector>
 
 namespace sonora::assets {
 class AssetStore;
@@ -30,6 +32,21 @@ struct RuntimeConfig {
   // folder reads no tags at all -- which is what makes it reasonable to do every
   // time rather than only when asked.
   bool scan_at_startup = false;
+
+  // The durable store (ADR 0008): play history, and the stable ids that jump
+  // list entries and sonora:// links are made of. Unlike library_path, this one
+  // is not safe to delete.
+  std::filesystem::path state_path;
+
+  // What the tray menu and an incoming link need from the part of the shell
+  // that owns the window. Both may be empty, and then those commands do
+  // nothing rather than crash.
+  std::function<void()> raise_window;
+  std::function<void()> quit;
+
+  // The command line this process was started with, so a sonora:// link in it
+  // is acted on once everything exists.
+  std::vector<std::string> arguments;
 };
 
 // Entry point of the helper executable: runs one CEF child process (renderer,
@@ -54,5 +71,12 @@ void StopCef();
 // Asks the browser to close. False means there is no browser yet, so the caller
 // should quit directly.
 bool RequestBrowserClose();
+
+// Acts on a command line that arrived from somewhere else: a second instance
+// that handed its arguments over and exited, or this process's own arguments at
+// startup. Safe from any thread, and safe before the shell is running -- in
+// which case it does nothing, which is the right answer for an activation that
+// has nowhere to go yet.
+void ActivateWithArguments(const std::vector<std::string>& arguments);
 
 }  // namespace sonora::shell

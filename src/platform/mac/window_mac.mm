@@ -39,7 +39,21 @@ class MacWindow final : public Window {
                                                         green:0.07
                                                          blue:0.07
                                                         alpha:1.0];
-    [window_ center];
+    if (desc.placement.has_value()) {
+      // AppKit's origin is the bottom-left of the main screen and y grows
+      // upwards; core::Rect is top-left with y growing down, like every other
+      // platform this project targets. The flip is the whole of the difference,
+      // and it is written here rather than in core because core is the part
+      // that must not know which way anybody's y axis points.
+      const core::Rect& bounds = desc.placement->bounds;
+      const CGFloat screen_height = NSMaxY([NSScreen screens].firstObject.frame);
+      const NSRect frame = NSMakeRect(bounds.x, screen_height - bounds.y - bounds.height,
+                                      bounds.width, bounds.height);
+      [window_ setFrame:frame display:NO];
+    } else {
+      [window_ center];
+    }
+    maximize_on_show_ = desc.placement.has_value() && desc.placement->maximized;
 
     delegate_ = [[SonoraWindowDelegate alloc] init];
     delegate_.owner = this;
@@ -54,11 +68,36 @@ class MacWindow final : public Window {
   void Show() override {
     [window_ makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
+    // "Maximized" has no exact equivalent here -- macOS has zoom, which is a
+    // window's idea of its useful size, and full screen, which is a different
+    // mode entirely. Zoom is the closer of the two, and the difference is worth
+    // knowing about rather than papering over.
+    if (maximize_on_show_ && !window_.isZoomed) {
+      [window_ zoom:nil];
+    }
   }
 
   void Close() override { [window_ close]; }
 
+  void Raise() override {
+    // AppKit has no equivalent of Windows' foreground-stealing rule here:
+    // activateIgnoringOtherApps is exactly what it says, and a deminiaturise
+    // does the rest.
+    if (window_.isMiniaturized) {
+      [window_ deminiaturize:nil];
+    }
+    [window_ makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+  }
+
   void* native_handle() const noexcept override { return (__bridge void*)window_; }
+
+  SizePx client_size() const noexcept override {
+    const NSRect frame = window_.contentView.frame;
+    const CGFloat scale = window_.backingScaleFactor;
+    return SizePx{static_cast<int>(frame.size.width * scale),
+                  static_cast<int>(frame.size.height * scale)};
+  }
 
   float scale_factor() const noexcept override {
     return static_cast<float>(window_.backingScaleFactor);
@@ -68,6 +107,18 @@ class MacWindow final : public Window {
 
   void SetOnResize(std::function<void(int, int)> handler) override {
     on_resize_ = std::move(handler);
+  }
+
+  core::SavedPlacement SavedPlacement() const override {
+    core::SavedPlacement saved;
+    saved.scale = scale_factor();
+    const NSRect frame = window_.frame;
+    const CGFloat screen_height = NSMaxY([NSScreen screens].firstObject.frame);
+    saved.bounds = core::Rect{
+        static_cast<int>(frame.origin.x), static_cast<int>(screen_height - NSMaxY(frame)),
+        static_cast<int>(frame.size.width), static_cast<int>(frame.size.height)};
+    saved.maximized = window_.isZoomed;
+    return saved;
   }
 
   void DispatchClose() {
@@ -88,6 +139,7 @@ class MacWindow final : public Window {
  private:
   NSWindow* window_ = nil;
   SonoraWindowDelegate* delegate_ = nil;
+  bool maximize_on_show_ = false;
   std::function<void()> on_close_;
   std::function<void(int, int)> on_resize_;
 };

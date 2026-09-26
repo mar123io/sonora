@@ -12,6 +12,7 @@ add_library(sonora_cef STATIC
   cef/app.cpp
   cef/bridge_router.cpp
   cef/client.cpp
+  cef/desktop.cpp
   cef/event_channel.cpp
   cef/handlers.cpp
   cef/library_host.cpp
@@ -40,6 +41,7 @@ target_link_libraries(sonora_cef PUBLIC
   sonora::audio
   sonora::bridge
   sonora::library
+  sonora::state
   sonora::platform
   sonora::core
   libcef_lib

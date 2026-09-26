@@ -5,13 +5,16 @@ add_executable(sonora_tests
   test_asset_store.cpp
   test_bridge.cpp
   test_capabilities.cpp
+  test_deep_link.cpp
   test_event_coalescer.cpp
   test_library.cpp
   test_media_session.cpp
   test_player.cpp
   test_ring_buffer.cpp
   test_scanner.cpp
-  test_track_stream.cpp)
+  test_state_store.cpp
+  test_track_stream.cpp
+  test_window_placement.cpp)
 
 # stub_handlers.h lives beside the tests, not in a target's include path.
 target_include_directories(sonora_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
@@ -22,6 +25,7 @@ target_link_libraries(sonora_tests PRIVATE
   sonora::audio
   sonora::bridge
   sonora::library
+  sonora::state
   Catch2::Catch2WithMain)
 
 include(Catch)

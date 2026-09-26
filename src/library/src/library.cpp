@@ -229,16 +229,28 @@ Library::Library(const std::filesystem::path& database_path) {
   // bound, not an expectation.
   sqlite3_busy_timeout(database_, 5000);
 
-  const std::lock_guard<std::mutex> lock(mutex_);
-  Execute(database_, "PRAGMA foreign_keys = ON");
-  // WAL so a read never blocks the write and the other way round. It is a no-op
-  // for ":memory:", which is why the tests still exercise the rest of this.
-  Execute(database_, "PRAGMA journal_mode = WAL");
-  // NORMAL rather than FULL: losing the last batch of a scan to a power cut
-  // costs one rescan of a few files. See the class comment -- this file is a
-  // cache.
-  Execute(database_, "PRAGMA synchronous = NORMAL");
-  Migrate();
+  // Everything after the open is wrapped, because a constructor that throws
+  // gets no destructor: Migrate() refuses a database written by a newer Sonora,
+  // and without this the connection -- and its lock on that file -- would stay
+  // open until the process exited, which is a worse outcome than the error it
+  // was reporting. Found by LeakSanitizer in week 9, present since week 7.
+  try {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    Execute(database_, "PRAGMA foreign_keys = ON");
+    // WAL so a read never blocks the write and the other way round. It is a
+    // no-op for ":memory:", which is why the tests still exercise the rest of
+    // this.
+    Execute(database_, "PRAGMA journal_mode = WAL");
+    // NORMAL rather than FULL: losing the last batch of a scan to a power cut
+    // costs one rescan of a few files. See the class comment -- this file is a
+    // cache.
+    Execute(database_, "PRAGMA synchronous = NORMAL");
+    Migrate();
+  } catch (...) {
+    sqlite3_close(database_);
+    database_ = nullptr;
+    throw;
+  }
 }
 
 Library::~Library() {
