@@ -145,6 +145,30 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
+      # The baseline in vcpkg.json is a commit of the vcpkg registry, and the
+      # runner images carry their own clone of it -- each pinned to whatever
+      # commit was current when the image was built. Windows and Linux happened
+      # to have this one; macOS did not, and said so in four seconds:
+      #
+      #   path 'versions/baseline.json' exists on disk,
+      #   but not in '319504a5326aa870edde46438c5455fa76305a56'
+      #
+      # vcpkg does not fetch it itself, so this does. The alternative is to
+      # clone vcpkg at the exact baseline and stop using the image's copy,
+      # which is more reproducible and costs minutes per run; this keeps the
+      # image's clone and makes the pin work, which is the right trade until
+      # the day a release has to be rebuilt years from now.
+      - name: Fetch the vcpkg baseline
+        shell: bash
+        run: |
+          set -eu
+          cd "$VCPKG_ROOT"
+          # --unshallow fails on a complete clone, which is not an error here.
+          git fetch --unshallow origin 2>/dev/null || git fetch origin
+          baseline=$(python3 -c "import json;print(json.load(open('$GITHUB_WORKSPACE/vcpkg.json'))['builtin-baseline'])")
+          git cat-file -e "$baseline^{commit}"
+          echo "vcpkg baseline $baseline is available"
+
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} -DSONORA_BUILD_UI=ON
 
@@ -206,6 +230,31 @@ jobs:
         with:
           path: third_party/cef
           key: cef-Windows-${{ hashFiles('cmake/cef_version.cmake') }}
+
+
+      # The baseline in vcpkg.json is a commit of the vcpkg registry, and the
+      # runner images carry their own clone of it -- each pinned to whatever
+      # commit was current when the image was built. Windows and Linux happened
+      # to have this one; macOS did not, and said so in four seconds:
+      #
+      #   path 'versions/baseline.json' exists on disk,
+      #   but not in '319504a5326aa870edde46438c5455fa76305a56'
+      #
+      # vcpkg does not fetch it itself, so this does. The alternative is to
+      # clone vcpkg at the exact baseline and stop using the image's copy,
+      # which is more reproducible and costs minutes per run; this keeps the
+      # image's clone and makes the pin work, which is the right trade until
+      # the day a release has to be rebuilt years from now.
+      - name: Fetch the vcpkg baseline
+        shell: bash
+        run: |
+          set -eu
+          cd "$VCPKG_ROOT"
+          # --unshallow fails on a complete clone, which is not an error here.
+          git fetch --unshallow origin 2>/dev/null || git fetch origin
+          baseline=$(python3 -c "import json;print(json.load(open('$GITHUB_WORKSPACE/vcpkg.json'))['builtin-baseline'])")
+          git cat-file -e "$baseline^{commit}"
+          echo "vcpkg baseline $baseline is available"
 
       - name: Install WiX ${{ env.WIX_VERSION }}
         run: dotnet tool install --global wix --version ${{ env.WIX_VERSION }}
