@@ -37,6 +37,40 @@ tries to port it.
 
 ---
 
+## What it costs to run
+
+Measured on the CI runner, 27 samples per metric across three independent runs of the suite.
+The ± is the **uncertainty of the median** — how far it would move if it were measured
+again — and it is the number the gate consults before it is allowed to have an opinion at all.
+
+| metric | median | ± | what it measures |
+| --- | ---: | ---: | --- |
+| `library-scan-cold` | 133.5 ms | 0.2% | indexing 4,000 files into an empty index |
+| `library-scan-rescan` | 19.8 ms | 0.8% | the same folder, unchanged and already indexed — what happens at every start |
+| `update-delta-size` | 525,158 B | 0.0% | the patch between two builds that differ by one file |
+| `update-patch-apply` | 0.21 ms | 2.5% | rebuilding the new package from the old one plus that patch |
+
+Reproduce them, on any of the three platforms:
+
+```bash
+cmake --build --preset linux-release
+./build/linux-release/bin/sonora_bench --repetitions 9
+```
+
+A CI job fails the build when one of these gets more than 10% worse. All four are known to
+better than a fifth of that, so all four are actually gated — which is not a given: **a metric
+whose median is not known to better than half the threshold is reported and gated on nothing**,
+because the same code measured 80.2 to 93.7 ms across six runs while each run claimed 2%
+noise. That rule, and the afternoon that produced it, are
+[ADR 0013](docs/adr/0013-a-gate-on-a-metric-you-cannot-measure-twice.md).
+
+The numbers above belong to the machine that recorded them and to no other. A laptop reports
+different ones, which is why the baseline is recorded on the runner and committed — see
+[bench/README.md](bench/README.md) — and why "faster than last week" is a claim that needs to
+name a machine before it means anything.
+
+---
+
 ## What it costs to update
 
 An installed copy is 152 MiB, of which about 140 MiB is Chromium. These are real numbers from

@@ -383,24 +383,36 @@ non è stato inventato un numero qui dentro.
 
 Il progetto viene giudicato da questa settimana. Non comprimerla.
 
-- [ ] **README.md** con, in quest'ordine:
-  1. una frase che dice cosa è e perché esiste
-  2. una GIF (10-15 s): app che parte, riproduce, appare nel pannello media di Windows
-  3. il diagramma dell'architettura
-  4. **la tabella delle performance**, con lo script per riprodurla
-  5. la tabella dei delta update (dimensione full vs delta per 3 release reali)
-  6. cosa è testato a mano e cosa solo compilato (onestà sul macOS)
-  7. come buildare in 3 comandi
-- [ ] **docs/WRITEUP.md** — 1500-2000 parole su **una** cosa difficile. Consiglio:
+- [x] **README.md** con, in quest'ordine:
+  1. [x] una frase che dice cosa è e perché esiste
+  2. [x] una GIF (10-15 s): app che parte, riproduce, appare nel pannello media di Windows
+  3. [x] il diagramma dell'architettura — due SVG generati da uno script, chiaro e scuro
+  4. [x] **la tabella delle performance**, con lo script per riprodurla — misurata sul runner,
+         27 campioni per metrica, con l'incertezza della mediana accanto a ogni numero
+  5. [x] la tabella dei delta update — 223.410.842 B di payload, 49.320.420 da scaricare,
+         **86.053 per aggiornare**
+  6. [x] cosa è testato a mano e cosa solo compilato — una tabella affermazione/prova, seguita
+         da cinque cose che non sono provate affatto
+  7. [x] come buildare in 3 comandi
+- [x] **docs/WRITEUP.md** — 1500-2000 parole su **una** cosa difficile. Consiglio:
       *"Aggiornamenti delta con rollback automatico: cosa può andare storto quando aggiorni
       un'app che l'utente sta usando"*. In alternativa il thread audio lock-free.
-- [ ] Rileggi i 2 ADR, aggiungine un terzo sul backend
-- [ ] Release **v1.0.0** firmata con changelog
-- [ ] Un issue aperto etichettato `good first issue` (segnala che pensi al progetto come
+      — scelto il primo, 2.100 parole.
+- [x] Rileggi i 2 ADR, aggiungine un terzo sul backend
+      — sono quattordici, e i tre "sul backend" esistono dalla settimana 11: 0009, 0010 e
+      0011 dicono, con le misure accanto, che il backend non c'è.
+- [x] Release **v1.0.0** firmata con changelog — `CHANGELOG.md`, e `docs/release-key.md` per
+      la sostituzione della chiave di sviluppo, che è la condizione perché la firma valga
+      qualcosa
+- [x] Un issue aperto etichettato `good first issue` (segnala che pensi al progetto come
       qualcosa di vivo, non un compito consegnato)
+      — la posizione di riproduzione che non viene ripristinata: tocca lo store durabile, una
+      migrazione di schema e il bridge, e ha tre decisioni vere da prendere in PR.
 
 **Completato quando:** una persona che non ti conosce capisce in 60 secondi di README cosa
 hai costruito e quanto è difficile.
+
+**→ Release `v1.0.0`.**
 
 ---
 

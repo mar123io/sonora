@@ -2083,3 +2083,162 @@ tacere su uno.
   misurati, le copertine solo dai tag, i file OneDrive non provati, `localhost:9222` bianco,
   il monitor staccato provato solo nella policy, e `Forget()` che esiste e non viene mai
   chiamato.
+
+---
+
+## Settimana 13 — Il repo che vuoi far leggere
+
+**Pianificata:** 14 - 20 dic 2026 · **Effettiva:** 27 set 2026
+**Stima:** 9 h · **Effettivo:** ___ h
+**Tag:** `v1.0.0`
+
+### Obiettivo
+
+Che una persona che non mi conosce capisca in sessanta secondi cosa c'è qui dentro e quanto
+è costato. Per dodici settimane il repository è stato il posto dove il lavoro succedeva;
+questa settimana diventa una cosa che qualcuno **legge**.
+
+### Fatto
+
+- [x] **`docs/WRITEUP.md`** — 2.100 parole sull'updater delta con rollback: aggiornare
+      un'applicazione mentre qualcuno la sta usando
+- [x] **Il diagramma dell'architettura**, chiaro e scuro, generati da `tools/gen_diagram.py`
+- [x] **README riordinato** come lo legge uno che arriva, non come è stato costruito
+- [x] La **tabella delle performance** con i numeri del runner e il comando per rifarli
+- [x] La tabella dei delta, con i tre numeri veri della release
+- [x] **"What is proved, and how"**: una tabella affermazione/prova, e cinque cose non provate
+- [x] Build in tre comandi
+- [x] `CHANGELOG.md` e `docs/release-key.md`
+- [x] Un issue `good first issue`, e la GIF
+- [x] Rilettura degli ADR: i tre "sul backend" che il roadmap chiedeva esistono dalla
+      settimana 11 — 0009, 0010 e 0011 — e dicono che il backend non c'è
+
+### La misura che chiude il progetto
+
+La baseline registrata sul runner, 27 campioni per metrica su tre run indipendenti:
+
+| metrica | mediana | incertezza |
+|---|---:|---:|
+| `library-scan-cold` | 133,467 ms | **0,21%** |
+| `library-scan-rescan` | 19,755 ms | 0,82% |
+| `update-delta-size` | 525.158 byte | 0,00% |
+| `update-patch-apply` | 0,208 ms | 2,47% |
+
+Tutte e quattro sotto un quinto della soglia, quindi **tutte e quattro sono davvero sotto
+gate** — e non era scontato: era proprio la cosa che l'ADR 0013 diceva di non dare per
+scontata. Tre run invece di uno sono bastati.
+
+Poi c'è il confronto che non stavo cercando. Le stesse quattro metriche, la stessa suite, sul
+container dove ho sviluppato:
+
+| | runner | container |
+|---|---:|---:|
+| `library-scan-cold` | 133,5 ms | ~250 ms |
+| `update-patch-apply` | 0,208 ms | ~1,06 ms |
+| incertezza sulla scansione a freddo | **0,21%** | 1,4% |
+
+Il runner di GitHub è quasi **due volte più veloce** della macchina su cui ho passato la
+settimana, e sette volte più veloce sul patch. Non è il punto interessante. Il punto è la
+terza riga: è anche **molto più silenzioso**. Tutta la settimana 12 è stata spesa a capire
+che una misura è una proprietà della macchina, e la prova finale è arrivata gratis il giorno
+dopo — su una macchina tranquilla lo stesso strumento dichiara un'incertezza sette volte
+minore, e la stessa soglia del 10% diventa una soglia diversa.
+
+E un dettaglio che vale la pena avere per iscritto: `update-delta-size` è **525.158** byte sul
+runner e **525.157** nel container. Un byte. È la metrica con spread zero, quella che ho messo
+nella suite proprio perché non è un tempo e non può muoversi — e si muove comunque di un byte,
+perché le due macchine hanno versioni di zstd diverse. Zero rumore **su una macchina**.
+
+### Cosa è costato più del previsto
+
+**La regressione volontaria, tre tentativi.** Il criterio di completamento della settimana 12
+chiede un PR con una regressione che la CI blocca, e sembrava la parte facile: rimetti il
+codice lento di prima e guarda il rosso. I primi due tentativi sarebbero usciti **verdi**.
+
+1. **Rimettere le tre allocazioni per file nel riconoscimento dell'estensione.** Su Linux la
+   riscansione è andata da 16,383 a 15,602 ms — cioè il codice "lento" era più veloce, dentro
+   il rumore. Il motivo è ovvio col senno di poi e non lo era prima: la parte costosa di
+   `ToUtf8(path.extension())` è la conversione **wide → UTF-8**, che esiste solo su Windows.
+   Su POSIX il percorso nativo è già stretto e la funzione è quasi una copia. **Il gate gira su
+   Linux, e l'ottimizzazione che avevo misurato era per metà un'ottimizzazione di Windows.**
+2. **`kPatchWorkers = 0 → 4`**, che l'ADR 0010 indica come l'errore da non fare: 525.157 byte
+   prima, 525.157 dopo. Identico. È scritto nell'ADR stesso — i job di zstd sono più grandi
+   dell'input quando l'input sta in 8 MiB — e l'avevo scritto io, e l'ho riprovato lo stesso.
+3. **Livello di compressione 19 → 3**: +0,04%. Perché nel bench il file che cambia è rumore
+   casuale, e il rumore casuale non si comprime: quel delta è grande quanto i byte cambiati,
+   qualunque cosa faccia il compressore.
+
+Quello che funziona è leggere i primi 4 KiB di ogni file durante la scansione, mascherato da
+funzionalità plausibile ("riconosci un file rinominato dal contenuto"): **+55,4% ± 0,7%** sulla
+riscansione. Non è un rallentamento inventato — è un open, una read e una close per file a
+ogni avvio, ed è esattamente il genere di cosa che in un diff non sembra costare niente.
+
+La lezione non è sulla patch. È che **avevo scritto nel README che l'ottimizzazione vale
+−7,2%, misurandola su una sola piattaforma**, e ci è voluto provare a rifarla al contrario per
+accorgersi che quella cifra è un numero di Linux e la parte Windows non l'ha mai misurata
+nessuno.
+
+**Un diagramma va guardato.** La prima versione l'ho scritta, generata, e stava per finire nel
+README: aveva una freccia tratteggiata che attraversava `libcef.dll` e non puntava a niente, e
+i nomi dei moduli si leggevano attaccati alle descrizioni — "library SQLite + FTS5 index" come
+se fosse una frase. Renderlo in PNG e **guardarlo** ha richiesto due minuti. La seconda
+versione aveva ancora una freccia che diceva che `state.sqlite` appartiene a
+`sonora-updater.exe`, che è falso; l'ho tolta invece di spostarla, perché un filo decorativo è
+già brutto e uno che nomina il proprietario sbagliato è peggio.
+
+### Cosa ho imparato
+
+- **La cosa più preziosa che un repo di portfolio può contenere è l'elenco di quello che non
+  è provato.** La tabella "What is proved, and how" è seguita da cinque cose che non lo sono —
+  il backend macOS che non è mai girato su un Mac, la sandbox spenta, la chiave da sostituire,
+  i dieci minuti di riproduzione mai misurati, l'MSI mai installato su una macchina pulita.
+  Metterle lì è l'unica versione di quella conversazione in cui le dico io.
+- **Un numero senza il nome della macchina non è un numero.** Vale per la baseline, vale per
+  il "−7,2%" della settimana scorsa, e vale perfino per la metrica con spread zero, che fra
+  due macchine differisce di un byte.
+- **Riordinare vale quanto scrivere.** Il README aveva già dentro quasi tutto; quello che non
+  aveva era l'ordine in cui lo cerca chi arriva. Una frase, un'immagine, quanto costa, cosa è
+  provato, come si compila — e il manuale sotto, per chi è rimasto.
+- **Un writeup che non finisce con i limiti è marketing.** L'ultima sezione di `WRITEUP.md`
+  dice cosa succede se l'updater della versione nuova è rotto, e quella è la domanda che farei
+  io a chi me lo porta.
+- **Dopo tredici settimane, la cosa che rifarei per prima è la disciplina di misurare prima di
+  decidere.** Ha cambiato il formato del pacchetto (settimana 11), la regola del gate
+  (settimana 12) e il contenuto di questa patch di prova (settimana 13). Tre volte su tre il
+  numero ha contraddetto il piano.
+
+### Numeri di verifica
+
+- **La baseline è vera e viene dalla macchina giusta**: 27 campioni per metrica, prodotti da
+  tre invocazioni indipendenti della suite sul runner, con `--append`, non da una sola.
+- **La regressione volontaria è verificata prima di essere consegnata**, e la patch si applica
+  pulita sull'albero: `+55,4% ± 0,7%`, uscita 1. Le tre che non funzionavano sono sopra.
+- **I due SVG sono stati resi in PNG e guardati**, chiaro e scuro, non solo generati.
+- **Zero link interni rotti** in README, CHANGELOG, WRITEUP e release-key, controllati sul
+  disco dove tutti i file esistono davvero.
+- **`docs/release-key.md` è stato riscritto dopo aver riletto `update_keygen.ps1`**: la prima
+  versione descriveva uno script che stampa la chiave privata a schermo, mentre quello vero la
+  scrive in un file e stampa già il comando `gh secret set`. Una guida che descrive male il
+  proprio strumento è peggio di nessuna guida.
+
+### Da riprendere
+
+Tredici settimane, e questo è quello che resta. Non è una lista di rimpianti: è la parte del
+progetto che qualcun altro potrebbe prendere in mano.
+
+- **Il backend macOS non è mai girato su un Mac**, e il backend Linux è uno stub che lo dice.
+  È il debito più grande in righe di codice, ed è anche quello che costa meno risolvere: serve
+  un Mac e due giorni.
+- **La sandbox di CEF è spenta** (ADR 0003). È il debito più grande in conseguenze.
+- **Le tre metriche che vogliono una finestra** — tempo fino al primo frame, RSS a riposo, CPU
+  su cinque minuti — sono ancora misurate da niente, e ora che il resto della macchina di
+  misura esiste sono la cosa più facile da aggiungere.
+- **I dieci minuti di riproduzione senza underrun** non sono mai stati misurati, e
+  `--play` stampa già il contatore che servirebbe.
+- **L'MSI non è mai stato installato su una macchina pulita**, quindi il runtime Visual C++
+  lasciato al sistema operativo è un'ipotesi.
+- **La firma del codice è self-signed**, che è trusted da una macchina sola. Serve un
+  certificato di una CA, che sono soldi e verifica d'identità, non codice.
+- Restano i piccoli: le copertine solo dai tag, i file OneDrive non provati, `localhost:9222`
+  bianco, `Forget()` mai chiamato, i quattro pacchetti autotools non fissati, e
+  `actions/checkout@v4` su Node 20 deprecato.
