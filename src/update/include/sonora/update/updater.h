@@ -66,6 +66,10 @@ struct StageOutcome {
   bool used_delta = false;       // whether the patch path was taken
   std::uint64_t downloaded = 0;  // bytes off the network
   std::string detail;            // for the log, never for a decision
+  // This installation's rollout bucket for the version it was offered, or -1 when there
+  // was no id to compute one from. Reported so that the about panel can show it: a
+  // mechanism whose effect nobody can observe is indistinguishable from a broken one.
+  int bucket = -1;
 };
 
 // Checks for an update and, if there is one, leaves a verified tree in

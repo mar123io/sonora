@@ -270,7 +270,7 @@ constexpr std::string_view kMulti = R"json({
 
 TEST_CASE("choosing an update takes the newest for this platform") {
   const Manifest manifest = Parse(kMulti);
-  const auto target = ChooseUpdate(manifest, "win-x64", Version{0, 4, 0}, {});
+  const auto target = ChooseUpdate(manifest, "win-x64", Version{0, 4, 0}, {}, std::nullopt);
   REQUIRE(target.has_value());
   CHECK(target->version == Version{0, 6, 0});
   CHECK(target->package.url == "https://e.test/b");
@@ -281,7 +281,7 @@ TEST_CASE("choosing an update takes the newest for this platform") {
 
 TEST_CASE("the delta chosen is the one from the version that is running") {
   const Manifest manifest = Parse(kMulti);
-  const auto target = ChooseUpdate(manifest, "win-x64", Version{0, 5, 0}, {});
+  const auto target = ChooseUpdate(manifest, "win-x64", Version{0, 5, 0}, {}, std::nullopt);
   REQUIRE(target.has_value());
   REQUIRE(target->delta.has_value());
   CHECK(target->delta->url == "https://e.test/d5");
@@ -289,7 +289,7 @@ TEST_CASE("the delta chosen is the one from the version that is running") {
 
 TEST_CASE("no delta from this version means the full package, not no update") {
   const Manifest manifest = Parse(kMulti);
-  const auto target = ChooseUpdate(manifest, "win-x64", Version{0, 3, 0}, {});
+  const auto target = ChooseUpdate(manifest, "win-x64", Version{0, 3, 0}, {}, std::nullopt);
   REQUIRE(target.has_value());
   CHECK(target->version == Version{0, 6, 0});
   CHECK_FALSE(target->delta.has_value());
@@ -297,25 +297,28 @@ TEST_CASE("no delta from this version means the full package, not no update") {
 
 TEST_CASE("another platform's releases are not offered") {
   const Manifest manifest = Parse(kMulti);
-  const auto target = ChooseUpdate(manifest, "win-x64", Version{0, 6, 0}, {});
+  const auto target = ChooseUpdate(manifest, "win-x64", Version{0, 6, 0}, {}, std::nullopt);
   CHECK_FALSE(target.has_value());
-  const auto mac = ChooseUpdate(manifest, "mac-arm64", Version{0, 6, 0}, {});
+  const auto mac = ChooseUpdate(manifest, "mac-arm64", Version{0, 6, 0}, {}, std::nullopt);
   REQUIRE(mac.has_value());
   CHECK(mac->version == Version{0, 7, 0});
-  const auto unknown = ChooseUpdate(manifest, "linux-x64", Version{0, 1, 0}, {});
+  const auto unknown = ChooseUpdate(manifest, "linux-x64", Version{0, 1, 0}, {}, std::nullopt);
   CHECK_FALSE(unknown.has_value());
 }
 
 TEST_CASE("the same version is not an update, and an older one is never a downgrade") {
   const Manifest manifest = Parse(kMulti);
-  CHECK_FALSE(ChooseUpdate(manifest, "win-x64", Version{0, 6, 0}, {}).has_value());
-  CHECK_FALSE(ChooseUpdate(manifest, "win-x64", Version{9, 0, 0}, {}).has_value());
+  CHECK_FALSE(
+      ChooseUpdate(manifest, "win-x64", Version{0, 6, 0}, {}, std::nullopt).has_value());
+  CHECK_FALSE(
+      ChooseUpdate(manifest, "win-x64", Version{9, 0, 0}, {}, std::nullopt).has_value());
 }
 
 TEST_CASE("a refused version is skipped, and an older one is still offered") {
   const Manifest manifest = Parse(kMulti);
   const Version refused[] = {Version{0, 6, 0}};
-  const auto target = ChooseUpdate(manifest, "win-x64", Version{0, 4, 0}, refused);
+  const auto target =
+      ChooseUpdate(manifest, "win-x64", Version{0, 4, 0}, refused, std::nullopt);
   REQUIRE(target.has_value());
   // 0.6.0 would not start on this machine, so the newest one left that is still
   // newer than what is running is 0.5.0. Refusing a version is a judgement about
@@ -323,7 +326,8 @@ TEST_CASE("a refused version is skipped, and an older one is still offered") {
   CHECK(target->version == Version{0, 5, 0});
 
   const Version both[] = {Version{0, 6, 0}, Version{0, 5, 0}};
-  CHECK_FALSE(ChooseUpdate(manifest, "win-x64", Version{0, 4, 0}, both).has_value());
+  CHECK_FALSE(
+      ChooseUpdate(manifest, "win-x64", Version{0, 4, 0}, both, std::nullopt).has_value());
 }
 
 TEST_CASE("the same version and platform twice is a generator bug and is refused") {

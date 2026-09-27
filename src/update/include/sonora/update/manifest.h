@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "sonora/update/hash.h"
+#include "sonora/update/rollout.h"
 #include "sonora/update/version.h"
 
 namespace sonora::update {
@@ -65,6 +66,9 @@ struct Release {
   Artifact archive;  // uncompressed: size and hash only
   Artifact package;  // the same bytes, zstd-framed, with a url
   std::vector<DeltaEntry> deltas;
+  // "rollout": { "percent": N }, absent meaning everybody. See ADR 0012: the beta
+  // channel is a manifest that omits this, not a behaviour of the client.
+  int rollout_percent = kFullRollout;
 };
 
 struct Manifest {
@@ -90,6 +94,7 @@ enum class ManifestError {
   kBadDelta,
   kDuplicateRelease,
   kTooMany,
+  kBadRollout,  // a percentage that is not one; refused rather than clamped
 };
 
 [[nodiscard]] std::string_view Describe(ManifestError error);
@@ -126,9 +131,14 @@ struct UpdateTarget {
 // *older* refused-adjacent version if one is newer than current, because the
 // judgement "this version does not start on this machine" is about one version and
 // not about the channel.
+// `install` is this installation's id, for the rollout arithmetic of ADR 0012. Absent --
+// because the id could not be read or created -- means partial rollouts are declined: an
+// installation that cannot work out where it stands is not in the first ten percent of
+// anything. Releases at 100% are unaffected, which is every release before week 12.
 [[nodiscard]] std::optional<UpdateTarget> ChooseUpdate(const Manifest& manifest,
                                                        std::string_view platform,
                                                        const Version& current,
-                                                       std::span<const Version> refused);
+                                                       std::span<const Version> refused,
+                                                       const std::optional<InstallId>& install);
 
 }  // namespace sonora::update

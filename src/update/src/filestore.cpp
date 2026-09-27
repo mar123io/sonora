@@ -543,6 +543,36 @@ LoadedJournal LoadJournal(const Layout& layout) {
   return loaded;
 }
 
+std::optional<InstallId> ReadOrCreateInstallId(const Layout& layout, const FlushFn& flush) {
+  FileStoreError error = FileStoreError::kNone;
+  if (const auto bytes = ReadFile(layout.install_id_file(), 64, error); bytes.has_value()) {
+    std::string_view text(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+      text.remove_suffix(1);
+    }
+    if (const auto id = ParseInstallId(text); id.has_value()) {
+      return id;
+    }
+    // A file that is there and is not an install id. Not overwritten: something put it
+    // there, and the something might be a newer version of this program.
+    return std::nullopt;
+  }
+
+  const auto id = NewInstallId();
+  if (!id.has_value()) {
+    return std::nullopt;
+  }
+  const std::string text = ToHex(*id) + "\n";
+  const std::span<const std::uint8_t> raw(reinterpret_cast<const std::uint8_t*>(text.data()),
+                                          text.size());
+  if (!WriteFileDurably(layout.install_id_file(), raw, flush, error)) {
+    // Not written means not remembered, and an id that changed on every start would put
+    // this installation in a different bucket every six hours. Declining is the answer.
+    return std::nullopt;
+  }
+  return id;
+}
+
 bool WriteLaunchFlag(const Layout& layout, const Version& version, const FlushFn& flush) {
   const std::string text = ToString(version);
   FileStoreError error = FileStoreError::kNone;

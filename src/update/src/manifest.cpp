@@ -204,6 +204,8 @@ std::string_view Describe(ManifestError error) {
       return "the same version and platform twice";
     case ManifestError::kTooMany:
       return "more releases or deltas than this version will read";
+    case ManifestError::kBadRollout:
+      return "a rollout percentage that is not a whole number from 0 to 100";
   }
   return "unknown error";
 }
@@ -307,6 +309,22 @@ std::optional<Manifest> ParseManifest(std::string_view json, ManifestError& erro
       return std::nullopt;
     }
 
+    if (node.contains("rollout")) {
+      const Json& rollout = node["rollout"];
+      if (!rollout.is_object() || !rollout.contains("percent") ||
+          !rollout["percent"].is_number_integer()) {
+        error = ManifestError::kBadRollout;
+        return std::nullopt;
+      }
+      release.rollout_percent = rollout["percent"].get<int>();
+      // Refused rather than clamped: a generator that writes 1000 has a bug, and a client
+      // that reads it as 100 hides it.
+      if (release.rollout_percent < 0 || release.rollout_percent > kFullRollout) {
+        error = ManifestError::kBadRollout;
+        return std::nullopt;
+      }
+    }
+
     if (node.contains("deltas")) {
       if (!node["deltas"].is_array()) {
         error = ManifestError::kBadDelta;
@@ -366,7 +384,8 @@ std::optional<Manifest> ParseManifest(std::string_view json, ManifestError& erro
 std::optional<UpdateTarget> ChooseUpdate(const Manifest& manifest,
                                          std::string_view platform,
                                          const Version& current,
-                                         std::span<const Version> refused) {
+                                         std::span<const Version> refused,
+                                         const std::optional<InstallId>& install) {
   const Release* best = nullptr;
   for (const Release& release : manifest.releases) {
     if (release.platform != platform) {
@@ -380,6 +399,16 @@ std::optional<UpdateTarget> ChooseUpdate(const Manifest& manifest,
                     [&release](const Version& v) { return v == release.version; });
     if (is_refused) {
       continue;
+    }
+    // The rollout, after the refusal and before the comparison, so that a release held
+    // back from this installation cannot hide an older one that is not. Two filters on one
+    // selection is exactly where an off-by-one lives, which is why they are tested
+    // together.
+    if (release.rollout_percent < kFullRollout) {
+      if (!install.has_value() ||
+          !InRollout(*install, release.version, release.rollout_percent)) {
+        continue;
+      }
     }
     if (best == nullptr || best->version < release.version) {
       best = &release;

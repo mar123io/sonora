@@ -19,6 +19,7 @@ add_executable(sonora_tests
   test_update_journal.cpp
   test_update_manifest.cpp
   test_update_patch.cpp
+  test_update_rollout.cpp
   test_update_version.cpp
   test_window_placement.cpp)
 

@@ -14,6 +14,7 @@
 #include "sonora/update/driver.h"
 #include "sonora/update/hash.h"
 #include "sonora/update/journal.h"
+#include "sonora/update/rollout.h"
 
 namespace sonora::update {
 
@@ -43,6 +44,7 @@ struct Layout {
   [[nodiscard]] fs::path journal_file() const { return work() / "journal"; }
   [[nodiscard]] fs::path launch_flag() const { return work() / "launch-ok"; }
   [[nodiscard]] fs::path download_dir() const { return work() / "download"; }
+  [[nodiscard]] fs::path install_id_file() const { return work() / "install-id"; }
 };
 
 enum class FileStoreError {
@@ -170,6 +172,18 @@ struct LoadedJournal {
   bool readable = true;
 };
 [[nodiscard]] LoadedJournal LoadJournal(const Layout& layout);
+
+// This installation's id, created on first use (ADR 0012).
+//
+// It lives beside the journal rather than in the installation for the reason everything in
+// Sonora.update/ does: the installed tree has to be exactly the package's members. So it
+// survives updates and rollbacks, which is what makes the rollout bucket stable across
+// them.
+//
+// Returns nothing only if it could neither be read nor created, and the caller's answer to
+// that is to decline partial rollouts rather than to guess.
+[[nodiscard]] std::optional<InstallId> ReadOrCreateInstallId(const Layout& layout,
+                                                             const FlushFn& flush);
 
 // The launch flag: written by the application when it has shown its window with the
 // UI loaded, read by the updater to decide whether the version that wrote it works.

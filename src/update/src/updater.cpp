@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "sonora/update/patch.h"
+#include "sonora/update/rollout.h"
 
 namespace sonora::update {
 namespace {
@@ -122,12 +123,20 @@ StageOutcome CheckAndStage(const Layout& layout,
     return outcome;
   }
 
-  const auto target = ChooseUpdate(*manifest, config.platform, current, loaded.journal.refused);
+  // The install id, created here on first use. Its absence declines partial rollouts
+  // rather than joining them: see ADR 0012.
+  const auto install = ReadOrCreateInstallId(layout, flush);
+
+  const auto target =
+      ChooseUpdate(*manifest, config.platform, current, loaded.journal.refused, install);
   if (!target.has_value()) {
     outcome.result = StageResult::kUpToDate;
     return outcome;
   }
   outcome.version = target->version;
+  if (install.has_value()) {
+    outcome.bucket = RolloutBucket(*install, target->version);
+  }
 
   std::error_code ec;
   const fs::space_info space = fs::space(layout.root, ec);

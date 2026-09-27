@@ -57,6 +57,7 @@ add_library(sonora_update STATIC
   src/journal.cpp
   src/manifest.cpp
   src/patch.cpp
+  src/rollout.cpp
   src/signature.cpp
   src/updater.cpp
   src/version.cpp)
