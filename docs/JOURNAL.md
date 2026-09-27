@@ -1481,7 +1481,7 @@ per cui non la trova.
   la checksum di zstd o l'hash della ricostruzione. Servivano due release che si
   contraddicono da sole: un manifest che nomina il pacchetto giusto e l'archivio
   sbagliato, e uno che nomina l'archivio giusto e il pacchetto sbagliato. **Tre controlli
-  di hash in fila sembrano ridondanti finche' non provi a togliere quello in mezzo.**
+  di hash in fila sembrano ridondanti finché non provi a togliere quello in mezzo.**
 - Il test esaustivo del giornale copre **tutti** gli stati: 7 stadi × 8 combinazioni delle
   tre cartelle × 3 cose che la bandierina può dire × 2 conteggi di tentativi × 2 esiti di
   avvio, ognuno portato a termine su più sessioni. Comprese le combinazioni irraggiungibili,
@@ -1550,3 +1550,524 @@ per cui non la trova.
   misurati, le **copertine solo dai tag**, i **file OneDrive** non provati, `localhost:9222`
   **bianco**, il caso del monitor staccato provato solo nella policy, e `Forget()` che
   esiste e non viene mai chiamato.
+
+---
+
+## Settimana 12 — Rollout, crash reporting, performance
+
+**Pianificata:** 7 - 13 dic 2026 · **Effettiva:** 27 set 2026
+**Stima:** 10 h · **Effettivo:** ___ h
+**Tag:** `v0.9-delivery`
+
+### Obiettivo
+
+Tre cose che sembrano indipendenti e non lo sono: rilasciare a poca gente per volta,
+riuscire a leggere un crash di qualcuno, e accorgersi che una modifica ha rallentato
+qualcosa **prima** che sia in una release. Tutte e tre parlano di quello che succede dopo
+il `git push`, che è il tema di questa fase.
+
+### Fatto
+
+- [x] **Rollout a percentuale**: `rollout.percent` nel manifest firmato, bucket stabile per
+      installazione, e la **versione dentro l'hash** (ADR 0012)
+- [x] `InRollout` e `RolloutBucket` in `sonora::update`, portabili, con i test sulle due
+      proprietà che contano: allargare **aggiunge**, e ogni release rimescola
+- [x] **Crash reporting**: quello di CEF, che era già nel processo (ADR 0014)
+- [x] `installer/crash_reporter.cfg.in` — configurazione come **file** accanto all'eseguibile,
+      spedita nell'MSI, e cancellabile per spegnere tutto
+- [x] Cinque crash key, messe **dopo** `CefInitialize` perché prima non esistono
+- [x] `tools/crash_receiver.py`: il POST multipart di Crashpad — **gzip, in chunk, senza
+      `Content-Length`** — → un `.dmp` e un `.json`, e ogni rifiuto stampato ad alta voce
+- [x] `tools/symbolise.ps1`: `cdb`, i PDB di **quella** link, le annotazioni prima, e il dump
+      più recente scelto da sé
+- [x] **I PDB pubblicati con ogni release**, e il job che *fallisce* se ne manca uno
+- [x] `--simulate-crash=browser`, solo nelle build con DevTools, **rifiutato** altrove invece
+      che ignorato; il renderer si crasha con `Page.crash` del protocollo DevTools
+- [x] `AppMain()` chiede a CEF, come prima cosa, se questo avvio è un sotto-processo — senza
+      quella riga il gestore dei crash non parte affatto, e ci sono voluti sei difetti in fila
+      per scoprirlo (sotto)
+- [x] `sonora::bench`: mediane, MAD, incertezza della mediana, e la regola che decide una
+      regressione — una libreria che non misura niente e ha i suoi test (ADR 0013)
+- [x] `sonora_bench`: quattro metriche, baseline con i campioni dentro, `--append`
+- [x] Job CI `linux-x64 (release, benchmarks)` che confronta e blocca, e un percorso di
+      registrazione della baseline su `workflow_dispatch`
+- [x] **Una vera ottimizzazione** nello scanner, misurata come si deve — vedi sotto
+- [x] Preset `linux-release`: il primo build con le ottimizzazioni accese fuori da Windows
+
+### La misura che ha cambiato la settimana
+
+Il roadmap chiedeva un job che fallisce se una metrica peggiora oltre il 10%. L'ho scritto
+in mezz'ora, l'ho fatto girare, ed era verde. L'ho fatto girare di nuovo **sullo stesso
+commit** ed era rosso.
+
+Sei invocazioni della suite, nessuna riga cambiata in mezzo:
+
+```
+80.2  84.1  93.7  81.4  88.9  82.6   ms   (library-scan-cold)
+```
+
+Da 80,2 a 93,7: il 17% fra il minimo e il massimo. E ogni singola invocazione, guardando
+solo i propri nove campioni, dichiarava uno **spread del 2%**. Tutte e sei erano convinte
+di aver misurato bene. Avevano anche ragione: dentro un processo il rumore *è* del 2%: è
+fra un processo e il successivo che la macchina cambia idea.
+
+Un gate costruito sull'opinione che un run ha di sé stesso fallisce a caso, e un gate che
+fallisce a caso viene spento entro quindici giorni — con dentro la regressione vera che
+nessuno ha guardato. Quindi la settimana si è spostata: il pezzo interessante non era la
+soglia, era **capire quando una soglia ha senso**.
+
+Quello che c'è adesso:
+
+- La baseline non tiene la mediana, tiene **tutti i campioni**. `--append` aggiunge un run
+  a quelli già dentro, e il job di registrazione chiama la suite tre volte. Lo spread che
+  il gate consulta è così su tre processi diversi e non sulla fortuna di uno.
+- Il gate non guarda lo spread: guarda l'**incertezza della mediana**,
+  `≈ 1.858 × MAD / mediana / √n`. È il numero che dice quanto la mediana si sposterebbe se
+  rimisurassi, che è esattamente la domanda.
+- Se quell'incertezza supera **metà della soglia**, la metrica non viene messa sotto gate
+  affatto: viene stampata come `too noisy` e non blocca niente. Con due mediane note al 4%
+  ciascuna e una soglia del 10%, una "regressione" dell'11% è dentro quello che due run
+  dello stesso codice producono.
+- Misurare più a lungo stringe il gate. È l'unico incentivo giusto, ed è un caso di test:
+  *"measuring longer makes a gate tighter, and that is the incentive"*.
+
+`update-delta-size` è nella suite per questo: non è un tempo, ha spread zero, gli stessi due
+input producono lo stesso patch byte per byte. È la metrica su cui una soglia dell'1% sarebbe
+ragionevole, e serve a dimostrare che il motivo per cui le altre non lo sono è la misura e
+non la regola.
+
+### L'ottimizzazione, e il numero che era sbagliato
+
+Profilando la scansione sono venute fuori due cose in `src/library/src/scanner.cpp`.
+Riconoscere l'estensione di un file costruiva **tre stringhe per file** — `extension()` fa
+un path, `u8string()` fa una stringa, `LowerAscii()` ne fa una copia — per rispondere a una
+domanda sugli ultimi cinque caratteri di un nome che era già in memoria. E trovare i file
+cancellati costruiva una **seconda tabella hash** con una copia di ogni percorso della
+libreria, per poi cercarci dentro riga per riga.
+
+Via entrambe: l'estensione si confronta in posto contro `path::native()`, e il giro cancella
+dalla tabella che ha già, così quello che resta alla fine è esattamente quello che non c'è
+più. Su una libreria da cinquantamila tracce sono circa 4 MiB e 50.000 allocazioni in meno
+a ogni avvio.
+
+Poi l'ho misurata. Prima il vecchio, tre run; poi il nuovo, tre run:
+
+```
+library-scan-rescan   19.240 -> 15.326 ms   -20.3%   improved
+library-scan-cold    263.439 -> 246.359 ms   -6.5%   unchanged
+```
+
+Un −20% con l'etichetta `improved` accanto. L'ho quasi scritto nel README.
+
+Quello che mi ha fermato è stato rifare la stessa prova dieci minuti dopo, **al contrario**:
+il binario vecchio contro una baseline del nuovo diceva −6,7% al posto di +22%, e cioè
+diceva che il codice vecchio era più veloce di quello nuovo. Le due misure non erano in
+disaccordo sull'ottimizzazione: erano in disaccordo su quanto è veloce questa macchina
+adesso.
+
+Rifatta come si deve — A e B **alternati**, sei coppie per ogni ordine, 108 campioni per
+parte:
+
+| | vecchio | nuovo | | |
+|---|---|---|---|---|
+| `library-scan-rescan` | 17,817 ms | 16,541 ms | **−7,2%** | ± 1,7% |
+| `library-scan-cold` | 257,043 ms | 252,025 ms | −2,0% | ± 1,4% |
+| `update-patch-apply` | 1,088 ms | 1,086 ms | −0,3% | ± 1,5% |
+
+L'ultima riga è quella che rende credibili le altre due. `update-patch-apply` non tocca
+niente di quello che ho cambiato: **deve** stare a zero. Misurata all'ingenua dichiarava
+−3,0%, e invertendo l'ordine delle due metà +2,7% — cioè il ±3% era l'ordine, non il codice.
+Alternando va a −0,3%, dentro la sua incertezza.
+
+Quindi il numero vero è **−7%**, non −20%. E il modo in cui lo so è una metrica che stava
+nella suite per non muoversi.
+
+C'è anche una cosa che il gate dice e che a me non era ovvia: sulla scansione a freddo
+l'ottimizzazione **non si vede**. −2% con un'incertezza di 1,4% è appena distinguibile da
+niente, perché un primo passaggio se ne va a leggere i tag dal disco e tre allocazioni per
+file non contano. Le allocazioni contano dove il resto del lavoro è poco, cioè nella
+riscansione — che è il caso che succede a *ogni avvio*, quindi è anche quello che vale.
+
+### Sei difetti fra il crash e lo stack
+
+Il giro dei crash — fault, handler, dump, upload, file su disco, stack simbolizzato — l'ho
+scritto in un pomeriggio. Poi l'abbiamo provato, e non funzionava in **sei** punti diversi.
+Uno era nell'applicazione. Cinque erano nei miei strumenti.
+
+Vale la pena leggerli di fila, perché avevano tutti lo stesso sintomo: **il silenzio.**
+
+**1. Il guardiano dell'istanza unica uccideva il gestore dei crash.** Crashpad non è un
+eseguibile a parte: Chromium lo avvia con `InitializeCrashpadWithEmbeddedHandler`, che
+**rilancia il binario corrente** con `--type=crashpad-handler`. Non passa da
+`browser_subprocess_path` — quella vale per renderer, GPU e utility, che vanno a
+`sonora_helper.exe`. E `Sonora.exe` non aveva mai chiamato `CefExecuteProcess`, quindi quel
+rilancio entrava dritto in `AppMain()`, trovava la rivendicazione dell'istanza unica della
+settimana 9, passava gentilmente i suoi argomenti al primario e usciva con 0. Crashpad, in
+attesa sull'altro capo di una named pipe:
+
+```
+TransactNamedPipe: Pipe terminata. (0x6D)
+crash server failed to launch, self-terminating
+```
+
+Due messaggi d'errore per dire *"il tuo guardiano dell'istanza unica ha ucciso il tuo gestore
+dei crash"*. E il guardiano non aveva torto: era davvero il secondo avvio dello stesso
+eseguibile. Non era una seconda Sonora, e fino a questa settimana **da quel binario non era
+mai partito nessun processo figlio**, quindi a nessuno era mai servito distinguere i due
+casi. Il rimedio è la prima riga di `AppMain()` e il pattern canonico di CEF, che avremmo
+dovuto avere dalla settimana 2.
+
+Come si è trovato vale più del difetto. Rilanciando a mano
+`Sonora.exe --type=crashpad-handler` **non si apriva nessuna finestra**, e la mia prima
+conclusione — "allora non arriva in `AppMain()`" — era sbagliata. Il dato che ha deciso era il
+**banner**: `Sonora 0.6.0 (...)` sulla prima riga significa che `AppMain()` c'era arrivato; la
+finestra mancava perché il processo moriva più tardi, dentro `CefInitialize`, con
+`0x80000003` — `STATUS_BREAKPOINT`, un `CHECK` di Chromium che salta a ragione quando gli si
+chiede di inizializzare un browser da un processo che è un gestore di crash. Quando un sintomo
+non discrimina fra due cause, si guarda una riga più su.
+
+**2. `AppName` mancava, e il suo default non è quello che sembra.** Su Windows il database dei
+crash va in `%LOCALAPPDATA%\<AppName>\User Data`, e senza quella chiave `<AppName>` è
+**`CEF`**. Non è un posto innocuo: sono i dump di Sonora in una cartella che nessuna
+disinstallazione di Sonora troverà mai, e dove nessuno che li cerchi andrà a guardare. Ci sono
+stati per mezza giornata, mentre cercavo altrove.
+
+**3. Due chiavi di configurazione che non esistono.** Avevo scritto `MaxUploads=5` — si chiama
+`MaxUploadsPerDay` — e `UploadToServer=true`, che non esiste affatto: caricare è quello che
+*significa* avere `ServerURL`. Una chiave sconosciuta in un file INI non è un errore, è una
+riga che non fa niente, che è il tipo di configurazione più costoso che ci sia. L'elenco delle
+chiavi che CEF legge sta in `include/cef_crash_util.h` e in nessun altro posto, e quel file
+era nel repo, sul disco, dall'inizio. L'ho letto dopo.
+
+**4. Il ricevitore rifiutava i dump in silenzio.** Crashpad **comprime** il corpo della
+richiesta — `Content-Encoding: gzip`, sempre, a meno che il gestore non sia avviato con
+`--no-upload-gzip`, che Chromium non passa. Il mio ricevitore non guardava quell'header:
+passava uno stream gzip a un parser MIME, non trovava nessuna parte, rispondeva 400 e **non
+stampava niente**, perché `log_message` era silenziato e `send_error` non dice nulla di suo.
+
+Quindi un ricevitore che **rifiutava attivamente** i report era indistinguibile da un
+ricevitore a cui nessuno spediva niente. Sono i due stati che tutta questa parte del progetto
+esiste per separare, confusi dallo strumento diagnostico. **Peggio di non averlo, perché gli
+si crede.**
+
+**5. E Crashpad non manda `Content-Length` affatto.** Comprime mentre scrive, quindi non
+conosce la lunghezza in anticipo: il corpo arriva con `Transfer-Encoding: chunked`, che
+`http.server` non decodifica — `BaseHTTPRequestHandler` consegna un socket posizionato sul
+primo header di chunk e nient'altro. Questo difetto l'ha trovato la riga `refused` aggiunta
+per il numero 4, **alla prima occasione, in due secondi**, stampando
+`Content-Length: None`. È l'unica cosa di oggi che si è ripagata immediatamente.
+
+**6. `.sympath` si mangia il resto della riga.** Il punto e virgola separa i comandi di `cdb`
+*tranne* dopo quelli il cui argomento è tutto ciò che segue. `symbolise.ps1` cominciava con
+`.symfix; .sympath+ <dir>; .reload /f; !analyze -v; .ecxr; kv; q`, e quello che `cdb` ne ha
+fatto è stato impostare il percorso dei simboli a
+
+```
+srv*;<dir>; .reload /f; !analyze -v; .ecxr; kv; lm; q
+```
+
+...e poi sedersi al prompt senza analizzare niente. Sembrava un debugger che non trovava i
+simboli. Era un errore di quoting. Il percorso non serviva impostarlo lì: `-y` e
+`_NT_SYMBOL_PATH` lo portano già, quindi stava in tre posti e uno dei tre ha mangiato gli
+altri comandi.
+
+E fuori conteggio, perché non era un anello rotto della catena ma la stessa specie di errore:
+**`--simulate-crash=renderer` non ha mai funzionato.** Doveva caricare `chrome://crash`, e
+sotto CEF quell'URL non fa niente — CEF serve un elenco corto di URL `chrome://` e quello non
+c'è dentro. Finestra grigia, nessun crash. Era l'unica cosa di questa settimana che avevo
+scritto **senza poterla provare**, ed è l'unica sbagliata. Adesso il flag rifiuta `renderer` e
+stampa il comando `Page.crash` del protocollo DevTools, che fa la cosa giusta senza una riga
+di codice nostra.
+
+#### Come si sono trovati i numeri 2, 3, 4 e 5
+
+Leggendo `settings.dat` e `metadata` di Crashpad **byte per byte**. Non sono formati
+pubblicati, ma hanno una magia, una versione e campi allineati, e sono 56 e 114 byte:
+
+```
+settings.dat   73 64 50 43  -> "CPds", la magia         ✓
+               02 00 00 00  -> versione 2
+               01 00 00 00  -> opzioni: kUploadsEnabled ACCESO
+               3c 20 b9 6a  -> 1790509116  (ultimo tentativo)
+               4c 2e b9 6a  -> 1790512716  = il precedente + 3600 esatti
+               02 00 00 00  -> un contatore a 2
+
+metadata       44 41 50 43  -> "CPAD"                    ✓
+               un record, UUID f4f1cdfa-... = lo stesso del .dmp
+               creato 1790508102, ultimo tentativo 1790509116, tentativi: 2
+```
+
+Quel `01` ha eliminato metà delle ipotesi in un colpo: gli upload **erano** abilitati. E i due
+tentativi registrati, con il ricevitore acceso, hanno cambiato la domanda da *"perché non
+spedisce"* a *"perché viene rifiutato"* — che è una domanda con una risposta.
+
+#### Lo stack, che è il progetto visto da sotto
+
+Alla fine il dump si legge, e la prima riga è quella che conta:
+
+```
+Failure.Bucket: NULL_POINTER_WRITE_c0000005_Sonora.exe!...::CrashThisProcessNow
+FAULTING_SOURCE_LINE_NUMBER: 71
+FAULTING_LOCAL_VARIABLE_NAME: address
+mov  dword ptr [rax],5011Ah     ds:00000000`00000000=????????
+```
+
+`5011Ah` è la costante scritta a mano in quella riga, e `lm v m Sonora` dice
+`C (private pdb symbols)`: simboli completi, tanto che `!analyze` sa come si chiama il
+puntatore. Ma la cosa che vale più del nome è lo stack intero, con file e riga per ogni
+fotogramma nostro:
+
+```
+CrashThisProcessNow          runtime.cpp @ 71      il fault
+StartCef's <lambda_3>        runtime.cpp @ 295     il timer dei tre secondi
+ShellTimer::Execute          timer.cpp @ 39
+task_execute                 CEF, task_cpptoc.cc
+libcef!...                   nome di modulo + offset: il tetto, e lo dice l'ADR 0014
+CefDoMessageLoopWork
+StartCef's <lambda_1>        runtime.cpp @ 201     SetWorkCallback
+DoWork                       event_loop_win32.cpp @ 75
+WorkWndProc                  event_loop_win32.cpp @ 117
+RunEventLoop                 event_loop_win32.cpp @ 174
+AppMain                      main.cpp @ 342
+```
+
+Il pump esterno della settimana 2, il timer della settimana 4, il layer di piattaforma della
+settimana 9. **La decisione architetturale di tenere il loop nativo in carico si legge in
+dieci righe di un minidump**, e questo è il vero motivo per cui i PDB vanno pubblicati: non
+per sapere *che* è crashato, per sapere *dove si trovava* quando è crashato.
+
+### Cosa è costato più del previsto
+
+**Il Crashpad che c'era già.** Il roadmap chiedeva Crashpad: handler fuori processo,
+minidump, upload, simboli. Sonora ce l'ha da week 2, dentro `libcef.dll`, ed è lo stesso —
+CEF spedisce il crash reporting di Chromium. Aggiungerne un secondo significa vendorare una
+dipendenza grossa, costruirla, e poi avere **due exception filter nello stesso processo che
+litigano su chi possiede il fault**. È la seconda volta in tre settimane che la settimana
+chiede una macchina che c'è già (la prima è l'ADR 0009, il servizio degli update), e la
+forma della risposta è la stessa: la parte interessante non è l'handler, è cosa si fa con
+quello che raccoglie.
+
+Che in questo caso è una cosa sola e non si può rinviare: **un minidump senza il PDB di
+quella link è una lista di indirizzi esadecimali per sempre.** Il dump porta i nomi dei
+moduli, il build id e gli indirizzi; i nomi stanno nel PDB che il linker ha prodotto per
+quella compilazione, e niente li ricostruisce dopo — ricompilare lo stesso commit sposta gli
+indirizzi. È l'unico artefatto di questa pipeline che non si può rifare il giorno che serve,
+e il giorno che serve è sempre dopo la release. Quindi il passo che li raccoglie **fallisce
+la build** se ne manca uno, invece di pubblicare una release che sembra identica a una
+completa.
+
+**`CefSetCrashKeyValue` prima di `CefInitialize` non fa niente.** Avevo scritto nel commento
+dell'header che le chiavi si mettono "prima che CEF sia inizializzato, perché un crash
+durante l'avvio di CEF vale comunque la pena di poterlo collocare". È falso due volte:
+Crashpad parte *dentro* `CefInitialize`, quindi la chiamata è un no-op; e un fault prima che
+l'handler esista non produce alcun dump, quindi non c'è niente su cui mettere la chiave. Le
+quattro chiamate sono finite subito dopo `CefInitialize`, con le risposte che erano già note
+dieci righe più su — il valore si impara dove si impara e si attacca al primo momento in cui
+c'è qualcosa a cui attaccarlo. L'unica che viene rimessa è lo stadio dell'updater, quando
+cambia: un crash in una versione non ancora confermata è un bug diverso dallo stesso crash
+in una che resta.
+
+**`cgi` non esiste più.** `crash_receiver.py` faceva il parsing del multipart con
+`cgi.FieldStorage`, che è il modo documentato... fino a Python 3.12. Il modulo è stato
+rimosso dalla standard library in **3.13**, e uno script diagnostico che smette di partire
+su un Python nuovo è uno script diagnostico che non c'è il giorno che serve. Riscritto con
+`email.parser.BytesParser`, che è il sostituto indicato e vuole il `Content-Type` come
+header invece che come argomento.
+
+**Il bucket che si rimescola.** La prima versione dell'aritmetica del rollout era
+`BLAKE2b(install_id) mod 100`, che è la cosa ovvia e ha un difetto che si vede solo
+pensando a due release di fila. Con l'id da solo, l'insieme di chi è nel 10% è **sempre lo
+stesso**: le stesse macchine sono cavie a ogni singola release, per sempre. E allargare dal
+10% al 25% con un hash che dipende anche dalla versione, se la versione entra al posto
+sbagliato, **sposta** gente dentro e fuori invece di aggiungerla — cioè chiede a qualcuno che
+ha già 0.7.0 di non averla più, che non è un'operazione che esiste.
+
+`bucket = BLAKE2b(install_id ‖ version) mod 100` ha entrambe le proprietà: allargare una
+soglia aggiunge soltanto, e ogni versione pesca un ordine nuovo. Sono due test, e il secondo
+conta i cambi: **più di 950 installazioni su 1000 cambiano bucket fra una versione e la
+successiva.**
+
+**Un numero di versione scritto a mano, per mezz'ora.** `crash_reporter.cfg` diceva
+`ProductVersion=0.7.0`, perché era la versione che stavo per taggare, e l'avevo giustificato
+in un commento: CEF legge il file così com'è, quindi non c'è un momento in cui sostituirlo.
+È falso — è esattamente quello che `sonora.rc.in` fa dalla settimana 2, e per la stessa
+ragione. Adesso è `crash_reporter.cfg.in`, `@PROJECT_VERSION@` arriva dal tag git come tutto
+il resto, e la copia generata è quella che viene spedita e copiata accanto all'eseguibile.
+Il README di questo progetto si vanta di **un solo numero di versione**: un file di
+configurazione che annuncia una release che non è mai esistita lo smentisce in cinque
+caratteri.
+
+**Il bit di eseguibile, coda della settimana 11.** Su Windows un test su 278 è rimasto
+rosso: MSVC riporta `perms::all` per qualunque file scrivibile, quindi ogni membro di un
+archivio pacchettizzato lì si portava dietro il flag "eseguibile". La risposta non è saltare
+il test: `ExecuteBitIsMeaningful(cartella)` crea un file vuoto e guarda se il filesystem
+*inventa* il permesso, e il test asserisce su entrambi i tipi di filesystem invece di
+tacere su uno.
+
+### Cosa ho imparato
+
+- **Un gate sulle prestazioni è un'affermazione su una misura prima di essere
+  un'affermazione sul codice.** Il 10% era il requisito; la parte che decide se il gate
+  serve a qualcosa è "quanto conosco queste due mediane", e sta in una libreria portabile
+  con i suoi test perché è il pezzo che ha più probabilità di essere sbagliato. La regola
+  che decide una regressione, se vive dentro uno strumento che gira solo in CI, è una regola
+  che nessuno ha mai testato.
+- **Se hai misurato prima A e poi B, non hai confrontato A e B: hai confrontato due
+  momenti.** Serve alternare, e serve una metrica che non possa muoversi. Nella suite ce n'è
+  una per caso — `update-patch-apply`, che sta lì per un'altra ragione — e senza di lei
+  avrei scritto −20% in un README, con la tabella e tutto.
+- **Una metrica di controllo non costa niente e vale una settimana.** È la stessa idea del
+  test negativo: la cosa che *non* deve cambiare è quella che ti dice se il tuo strumento
+  funziona.
+- **La percentuale di un rollout non è un numero, è una funzione di due cose.** Chiunque
+  scriva `hash(id) % 100` ottiene un rollout che funziona alla prima release e tratta male
+  le stesse persone per sempre. Metterci dentro la versione costa un `‖` e cambia il
+  significato della soglia da "chi" a "chi, questa volta".
+- **Configurazione come file non è pigrizia se il file è l'interfaccia.** CEF legge
+  `crash_reporter.cfg` prima che qualunque riga mia possa girare, quindi non c'era scelta —
+  ma le due conseguenze sono migliori del codice: si modifica su una macchina che sta
+  crashando senza ricompilare, e **cancellarlo spegne il crash reporting**. Che è
+  l'interruttore onesto per chi non vuole che dei dump escano dal suo computer, ed è
+  documentato come tale nel README invece di essere un effetto collaterale.
+- **Il commento che sbaglia è più caro del codice che sbaglia.** L'ordine delle crash key
+  l'avevo scritto nell'header, con la motivazione, prima di verificare quando Crashpad parte.
+  Il codice l'avrei corretto; il commento invece avrebbe insegnato la cosa sbagliata a
+  chiunque lo leggesse, me compreso fra sei mesi.
+- **Cinque chiavi e non venticinque.** Un crash report è la cosa più delicata che
+  un'applicazione desktop spedisce. La lista è corta abbastanza perché una persona la legga e
+  decida: versione, build, stadio dell'updater, schema della libreria, se l'audio è partito.
+  Non il percorso della libreria, non un nome di file, niente che identifichi la macchina.
+- **L'applicazione aveva un difetto; i miei strumenti ne avevano cinque.** È il rapporto che
+  non mi aspettavo, e ha una spiegazione: il codice dell'applicazione ha dei test, gli
+  strumenti diagnostici no — girano una volta, il giorno che servono, e quel giorno nessuno
+  ha voglia di dubitare di loro. Scriverli è la parte facile; l'unica prova che valgono
+  qualcosa è farli girare contro la cosa vera, e questo pomeriggio è stato quello.
+- **Il sintomo di quasi tutto, qui, era il silenzio**, e ogni volta il silenzio significava
+  due cose diverse che bisognava distinguere: non ha provato / ha provato e ha rinunciato;
+  non è arrivato / è arrivato e l'ho rifiutato; non trova i simboli / non ha nemmeno eseguito
+  il comando. Un difetto che non si annuncia si diagnostica solo aggiungendo qualcosa che
+  parli — e la riga `refused` che stampa codice, ragione e header ha trovato il difetto
+  successivo **in due secondi**.
+- **Avevo scritto un ricevitore per il POST che immaginavo, non per quello che manda un client
+  vero.** Gzip e chunked sono il comportamento di *default* di Crashpad, non casi limite, e il
+  mio test lo confermava perché il POST del test l'avevo scritto io con la stessa immaginazione.
+  Un test scritto dalla stessa testa che ha scritto il codice condivide i suoi presupposti;
+  quello che li rompe è il client vero, o la sua documentazione.
+- **Il file binario di uno strumento altrui è documentazione.** `settings.dat` e `metadata` di
+  Crashpad non sono formati pubblicati, ma hanno una magia, una versione e campi allineati, e
+  in 56 e 114 byte c'era la risposta che tre ore di tentativi non avevano dato. Quando lo stato
+  di qualcosa è su disco, leggerlo batte riprovare sperando.
+- **L'header di una dipendenza vale più di quello che ti ricordi della dipendenza.**
+  `cef_crash_util.h` elenca esattamente le chiavi che CEF legge e dove finisce il database, era
+  nel repo dall'inizio, e due dei sei difetti sono spariti nel minuto in cui l'ho aperto.
+- **Il quoting di uno strumento è parte della sua API.** `.sympath` che si mangia il resto
+  della riga non è un dettaglio di `cdb`: è la differenza fra "non trova i simboli" e "non ha
+  eseguito i comandi", e le due cose si somigliano abbastanza da costare un giro.
+
+### Numeri di verifica
+
+- **318 casi, 36.876 asserzioni**, puliti sotto ASan + UBSan + LSan, a
+  `-Wall -Wextra -Wpedantic -Wconversion -Wshadow`. Girano anche `sonora_bench` sotto i
+  sanitizzatori, che è il modo di sapere che lo strumento di misura non è quello che perde
+  memoria.
+- **Il gate blocca davvero.** Rimesso lo scanner della versione precedente e rifatto girare
+  contro la baseline del nuovo: `library-scan-rescan 15.951 -> 19.498 ms +22.2% +/- 3.2%
+  REGRESSED`, uscita 1. Verde e rosso dello stesso strumento sulla stessa macchina a dieci
+  minuti di distanza — che è, appunto, quanto bisogna stare attenti.
+- **La distribuzione del rollout è misurata, non assunta**: 10.000 installazioni finte, e
+  ogni bucket fra 50 e 150 occorrenze. Non è una prova di uniformità, è il limite che
+  distingue un hash da uno `% 100` su un contatore.
+- **Un rollout parziale non nasconde una release più vecchia.** 0.6.1 al 10% e 0.6.0 al
+  100%: circa un decimo delle installazioni si vede offrire 0.6.1, il resto 0.6.0, e
+  **nessuna** si vede offrire niente. Una percentuale ritarda una versione, non ne blocca
+  un'altra.
+- **Il giro dei crash è provato per intero, su Windows, con un crash vero.** Dump da
+  **1.569.248 byte**, che è esattamente la dimensione del `.dmp` nel database di Crashpad —
+  quindi è lo stesso file, byte per byte, e non una ricostruzione. **41 annotazioni**, di cui
+  le cinque `sonora_*` con valori veri (`sonora_audio_started` sa perfino quale scheda audio è
+  stata aperta), e fra quelle di Chromium `switch-1 --simulate-crash=browser`, cioè il dump
+  sa perché è stato provocato.
+- **E prima, in container, con la forma esatta di quello che manda Crashpad**: multipart
+  compresso con gzip, spedito in chunk senza `Content-Length`, boundary nello stile di
+  Crashpad, un dump da 512 KB ricostruito byte per byte (512.004 in ingresso, 512.004 in
+  uscita). Più i due casi negativi, che sono il motivo per cui il primo tentativo su Windows
+  è andato bene: corpo non compresso → continua a funzionare; corpo che **dichiara** gzip e
+  non lo è → rifiutato ad alta voce, con la ragione e i quattro header pertinenti. La prima
+  versione di quel test usava un POST che avevo scritto io immaginando il client, ed è per
+  questo che passava mentre il ricevitore non funzionava.
+- **Lo stack è simbolizzato, e i simboli sono quelli giusti.** `lm v m Sonora` dice
+  `C (private pdb symbols)` con il percorso del PDB di *questa* link; `!analyze` arriva fino a
+  `FAULTING_LOCAL_VARIABLE_NAME: address`, e ogni fotogramma nostro porta file e numero di
+  riga. I tre moduli senza simboli — `libcef`, `ucrtbased`, `chrome_elf` — sono esattamente
+  quelli che l'ADR 0014 dichiara come tetto.
+- **Nove minuti di download dei simboli di sistema la prima volta**
+  (`Analysis.Init.Elapsed.mSec: 532255`), immediato dalla seconda: è il motivo per cui il
+  percorso dei simboli nello script è un `SRV*` con cache locale e non un URL nudo.
+- **Verificato con il compilatore, non a occhio**, quello che in container non si può
+  costruire: `crash_keys.cpp`, `update_service.cpp`, `main.cpp` e le quattro chiamate di
+  `runtime.cpp` compilati con `-fsyntax-only` contro gli header veri e degli stub minimi di
+  CEF, nelle due configurazioni con e senza `SONORA_ENABLE_DEVTOOLS`. La settimana 11 ha
+  insegnato che un errore di compilazione su Windows costa un giro di CI da sette minuti.
+- **Otto file CMakeLists con le parentesi bilanciate** e una riconfigurazione da zero,
+  perché l'errore di parsing della settimana 11 era una parentesi.
+
+### Da riprendere
+
+- **La baseline non è ancora registrata sul runner, e per questo il criterio di
+  completamento della settimana 12 è dimostrato in locale e non in CI.** Il gate esiste, il
+  job esiste, la regola è testata, la regressione volontaria fallisce sulla mia macchina —
+  ma i numeri appartengono alla macchina che misura, e una baseline registrata su un
+  container non è la baseline di `ubuntu-latest`. Serve un `workflow_dispatch` con
+  `record_baseline`, scaricare l'artefatto e committarlo: è scritto in
+  [`bench/README.md`](../bench/README.md). Finché non c'è, il job misura, dice che non ha
+  niente con cui confrontare, ed esce verde — che è il comportamento giusto per un gate
+  senza baseline, e il motivo per cui non ho inventato un file di numeri.
+- **Tre delle quattro metriche che il roadmap chiedeva non esistono**: tempo fino al primo
+  frame, RSS a riposo, CPU su cinque minuti di playback. Vogliono una finestra, una GPU e
+  una scheda audio, e un runner CI non ne ha nessuna. Sono nominate nell'ADR 0013 come
+  misurate da niente, che è meno soddisfacente di un numero e più vero.
+- **Il canale `beta` non c'è.** Il roadmap lo chiedeva sempre al 100%; c'è un canale, e
+  inventarne un secondo senza nessuno dentro avrebbe aggiunto un campo al manifest e zero
+  informazione. Il giorno che serve è un campo e un confronto, non un servizio.
+- **Un crash prima che `libcef.dll` sia caricata non viene segnalato.** L'handler è dentro,
+  quindi un fault nelle prime istruzioni di `Sonora.exe` — la lettura del giornale
+  dell'updater, per esempio — non produce niente. È un buco vero, e la mitigazione onesta è
+  che il codice che gira prima di CEF è quello con meno pezzi mobili: leggi un file,
+  confronta cinque valori, avvia un processo o no.
+- **Il giro dei crash è provato su Windows e su nient'altro**, che è lo stato di tutto ciò che
+  tocca il sistema in questo progetto, ma qui vale dirlo perché i sei difetti trovati oggi
+  erano tutti nel percorso Windows: il rilancio dell'eseguibile, il nome della cartella dei
+  dati, `cdb`. macOS e Linux hanno un Crashpad che funziona e nessuno che l'abbia acceso.
+- **Che un upload arrivi non è provato da CI**, e non può esserlo: il ricevitore è uno
+  script, non un servizio. Quello che CI controlla è che il file di configurazione venga
+  spedito e che i PDB siano attaccati alla release — le due assenze che si scoprirebbero solo
+  il giorno che un dump va letto.
+- **Nessun PDB di `libcef.dll`, mai.** I simboli di Chromium sono dell'ordine dei GB per
+  build e CEF non li pubblica per le distribuzioni binarie: un frame dentro CEF è un nome di
+  modulo più un offset, e quello è il tetto. `symbolise.ps1` lo dice invece di far sembrare
+  che manchi qualcosa.
+- **`cdb` è una dipendenza esterna, non installata di default, e la sua assenza si presenta
+  male.** Sulla macchina di sviluppo la cartella `Windows Kits\10\Debuggers\x64` **esisteva
+  ed era vuota**, che è il modo più confondente possibile di non essere installata: un guscio
+  creato da un altro componente dell'SDK. Va spuntata a mano (Impostazioni → App → Windows SDK
+  → Modifica → *Debugging Tools for Windows*), e non c'è un pacchetto NuGet che la eviti — ho
+  controllato, `Microsoft.Debugging.Platform.cdb` non esiste. Il messaggio d'errore dello
+  script dice esattamente questo, e quel giorno è servito.
+- **`cdb` è una dipendenza esterna, e non è installata di default** con il workload C++ di
+  Visual Studio: i Debugging Tools sono una feature separata dell'SDK. Lo script dice cosa
+  installare quando non lo trova. L'alternativa — costruire `dump_syms` e
+  `minidump_stackwalk` di Breakpad per non dipendere da uno strumento che Microsoft regala —
+  è una settimana di lavoro per uno script che girerebbe comunque solo su Windows.
+- **I dump si accumulano nella cartella dei dati utente** se nessuno li raccoglie.
+  `MaxUploads`, `MaxDatabaseSizeInMb` e `MaxDatabaseAgeInDays` nel file di configurazione lo
+  limitano, e i numeri stanno dove una persona li legge invece che in una costante da cercare.
+- Restano dalle settimane precedenti: la **chiave di firma di sviluppo** da sostituire (e
+  `SONORA_RELEASE_KEY` non c'è, quindi le release escono senza manifest), la chiave in un
+  segreto del repository, **macOS e Linux senza updater**, l'updater rotto della versione
+  nuova che non torna indietro, i **quattro pacchetti autotools non fissati**, il runtime
+  Visual C++ fuori dall'installer e non provato su una macchina pulita,
+  `actions/checkout@v4` su Node 20 deprecato e `ubuntu-latest` che diventa Ubuntu 26 il 19
+  ottobre, la **sandbox di CEF spenta** (ADR 0003), i **10 minuti senza underrun** non
+  misurati, le copertine solo dai tag, i file OneDrive non provati, `localhost:9222` bianco,
+  il monitor staccato provato solo nella policy, e `Forget()` che esiste e non viene mai
+  chiamato.

@@ -57,6 +57,9 @@ and a versioned bridge between them so the two can ship independently.
 | Every tool version pinned: CEF, vcpkg registry, clang-format, WiX | working |
 | Code signing | demonstrated with a self-signed certificate — see below |
 | Delta package, signed manifest, atomic swap with rollback | working — **84 KiB instead of 152 MiB** for three lines of C++ |
+| Staged rollout: a percentage in the signed manifest, a stable bucket per installation | working |
+| Crash reporting: CEF's own Crashpad, local endpoint, PDBs published with every release | working |
+| Benchmark harness and a CI gate that refuses a 10% regression | working — **baseline not yet recorded on the runner** |
 | Release signing key | **the development key; must be replaced before a real release** |
 | Updater on macOS and Linux | the decisions are built and tested there; the five platform calls say no |
 | Staged rollout, crash reporting, perf gates | week 12 |
@@ -378,6 +381,7 @@ finds. Override with `$env:CMAKE_GENERATOR`.
 |---|---|
 | `win-debug`, `win-release` | everything, including the shell and CEF |
 | `mac-release`, `linux-debug` | core, assets, platform and the tests — no CEF |
+| `linux-release` | the same, with optimisation on: the only preset whose numbers mean anything, and the one the benchmark job uses |
 
 ### Formatting
 
@@ -453,6 +457,31 @@ the one where a good version would be thrown away. If the flag never appears, th
 *after* that one rolls the previous version back and adds the new one to a refused list, so
 the same version is not downloaded and reverted every six hours forever.
 
+#### Not everybody at once
+
+A release can name a percentage, and then only that fraction of installations take it:
+
+```json
+{ "version": "0.7.0", "rollout": { "percent": 10 } }
+```
+
+There is nothing on the server side of that — there is no server. Each installation makes an
+identifier once, keeps it in its own update directory, and computes
+
+```
+bucket = BLAKE2b(install_id || version) mod 100
+```
+
+...and updates when the bucket is below the percentage. The version is inside the hash, not
+just the identifier, and that is the whole design: it means widening 10% to 25% **adds**
+installations rather than reshuffling them, so nobody who already has 0.7.0 is asked to
+un-have it, and it means every release draws a fresh order, so the same unlucky machines are
+not first every single time. [ADR 0012](docs/adr/0012-rollout-is-a-number-in-a-signed-file.md)
+has the arithmetic and the two properties the tests hold it to.
+
+A held-back release does not hide an older one: an installation outside 0.7.0's 10% is still
+offered 0.6.1 if it is behind that. The percentage delays a version; it never strands one.
+
 #### Trying it without a release
 
 Three things are worth running, and none of them needs a server:
@@ -496,6 +525,137 @@ everybody download 47 MiB and looks entirely healthy.
 
 ---
 
+### Crashes, and what a dump is worth
+
+Sonora does not add a crash handler, because it already has one: Crashpad is inside
+`libcef.dll`, out of process, and has been in every build since week 2. Two crash handlers in
+one process install two exception filters and argue about which of them owns the fault, so
+there is one, it is CEF's, and what this project adds is the part that decides whether a dump
+can be read at all. [ADR 0014](docs/adr/0014-the-crash-handler-is-the-one-already-in-the-process.md)
+is the whole argument.
+
+**A minidump without its PDB is a list of hexadecimal addresses, forever.** The names live in
+the file the linker produced for that exact link; a rebuild of the same commit moves the
+addresses. So every release attaches `Sonora.pdb`, `sonora_helper.pdb` and
+`sonora-updater.pdb`, the CI step that collects them **fails the build** if one is missing,
+and they are deliberately not in the MSI — they are of no use to anybody installing Sonora
+and they are larger than the application.
+
+Configuration is a file next to the executable, `crash_reporter.cfg`, because that is where
+CEF reads it from — before `CefInitialize`, before any code of ours runs. Two things follow
+from it being a file, and both are on purpose:
+
+- it can be edited on a machine that is crashing, without a rebuild;
+- **deleting it turns crash reporting off completely.** That is the honest off switch for
+  anybody who does not want dumps leaving their computer, and this is it being documented as
+  one rather than mentioned in a comment.
+
+Five keys are attached to every dump: the version, the `git describe` of the build, what the
+updater's journal said, the library schema version, and whether the audio device started.
+Not the library path, not a file name, nothing identifying the machine — a crash report is
+the most sensitive thing a desktop application sends, and the list is short enough that a
+person can read it and decide.
+
+There is no crash server, for the same reason there is no update server: every installation
+would post to it forever, including the ones from three years ago. The configured endpoint is
+local, and `tools/crash_receiver.py` is the script that receives it.
+
+```powershell
+# one window: the receiver
+python tools/crash_receiver.py --dir build/crashes
+
+# another: a debug build that will fault on purpose three seconds in
+./build/win-debug/bin/Debug/Sonora.exe --simulate-crash=browser
+
+# then read the stack: the newest dump, against the build that produced it
+./tools/symbolise.ps1 -Symbols build/win-debug/bin/Debug
+```
+
+`--simulate-crash` exists only in a DevTools build, and outside one it is **refused** rather
+than ignored: a flag that is silently ignored looks exactly like a crash handler that
+swallowed the crash, which is the one thing this is here to tell apart.
+
+It crashes the browser process. For the renderer, the DevTools protocol does it with no code
+of ours — `chrome://crash` is not one of the `chrome://` URLs CEF serves, so it loads nothing
+and leaves a blank window:
+
+```powershell
+$ws = (Invoke-RestMethod http://localhost:9222/json)[0].webSocketDebuggerUrl
+# send {"id":1,"method":"Page.crash"} on that socket -- any wscat/websocket client will do
+```
+
+**Start the receiver first**, and that is not politeness. A dump that finds nobody listening is
+kept in the local database and the failed attempt applies an incremental backoff — up to 24
+hours — and drops the daily upload limit to one until the process restarts. So the second
+attempt is further away than the patience of whoever is waiting for it. The database, if you
+need to look:
+
+```powershell
+Get-ChildItem "$env:LOCALAPPDATA\Sonora\User Data" -Recurse -File
+```
+
+That path is `AppName` in `crash_reporter.cfg`, and it has to be set: CEF's default is a folder
+called **CEF**, where nothing that uninstalls Sonora will ever find these files and nobody
+looking for them will look.
+
+What is not proved by CI: that an upload arrives. The receiver is a script, not a service, so
+a job cannot check it without standing one up. What CI does check is that the configuration
+file ships and that the PDBs are attached — the two absences that would only be discovered on
+the day a dump needed reading.
+
+---
+
+### Performance, and a gate that can be trusted
+
+```
+library-scan-cold     4,000 files into an empty index
+library-scan-rescan   the same folder, unchanged, already indexed
+update-delta-size     the patch between two builds that differ by one file
+update-patch-apply    rebuilding the new package from the old one plus the patch
+```
+
+`sonora_bench` measures those four, and a CI job fails the build when one gets more than 10%
+worse. The interesting rule is the second one: **a metric whose median is not known to better
+than half the threshold is not gated at all.** It is reported as too noisy and it blocks
+nothing.
+
+That rule is there because of a measurement. The same code, unchanged, produced medians from
+80.2 ms to 93.7 ms across six runs of the suite, while every individual run reported a spread
+of about 2%. A gate built on one run's opinion of its own noise fails builds at random, and a
+gate that fails at random is switched off within a fortnight — so the baseline stores every
+sample from every recording run and the gate consults the uncertainty of the median,
+`≈ 1.858 × MAD / median / √n`. [ADR 0013](docs/adr/0013-a-gate-on-a-metric-you-cannot-measure-twice.md)
+is the reasoning; [`bench/README.md`](bench/README.md) is how to run it and how to record a
+baseline.
+
+#### The optimisation, and the number that was wrong
+
+Profiling the scan found two things in `src/library/src/scanner.cpp`: recognising a file
+extension built three strings per file (`extension()`, `u8string()`, a lowercased copy) to
+answer a question about the last five characters of a name that was already in memory, and
+finding deleted files built a second hash table holding a copy of every path in the library.
+Both are gone — the extension is compared against `path::native()` in place, and the walk
+erases from the table it already has, so whatever is left at the end is exactly what is gone.
+
+Measured, interleaved, 108 samples each way:
+
+```
+library-scan-rescan    17.817 ->  16.541 ms    -7.2%  +/- 1.7%
+library-scan-cold     257.043 -> 252.025 ms    -2.0%  +/- 1.4%
+update-patch-apply      1.088 ->   1.086 ms    -0.3%  +/- 1.5%   <- the control
+```
+
+The last line is the point of the table. Measured the obvious way — all the runs of the old
+code, then all the runs of the new — the same change claimed **−17% and −20%** on the rescan,
+and `update-patch-apply`, which the change cannot possibly touch, claimed −3.0%. Reversing
+the order flipped that to +2.7%. It was drift over minutes, not code; a quarter of the
+"improvement" was the machine having a better afternoon.
+
+So the honest answer is −7%, and the reason it is the honest answer is a metric that was in
+the suite to move by nothing.
+
+---
+
 ## Layout
 
 ```
@@ -504,7 +664,8 @@ src/state/       the durable store: play history and stable ids (ADR 0008)
 src/audio/       ring buffer, decoders, engine — no OS, no CEF, no device
 src/assets/      the web bundle as bytes: embedded table + the two stores that serve it
 src/bridge/      the native<->web protocol: envelope, errors, generated dispatch — no CEF
-src/update/      manifest, signature, archive, patch, journal — the updater's decisions, no OS
+src/update/      manifest, signature, archive, patch, journal, rollout — the updater's decisions, no OS
+src/bench/       medians, uncertainties, and the rule that decides a regression — measures nothing
 src/platform/    iface/ + win/ + mac/ + linux/ + shared/ — the only place #ifdef on the OS is allowed
 src/shell/       the executable: window, CEF host, scheme handler, helper process
 src/updater/     sonora-updater: the one process allowed to move the installation
@@ -513,9 +674,13 @@ tests/           Catch2, runs against core and assets on every platform
 schema/          bridge.schema.json — the single source of truth for the bridge
 cmake/           CEF provisioning and pinning, asset and bridge generation
 tools/           pin_cef.py, embed_assets.py, gen_bridge.py, make_icon.py,
-                 gen_installer_files.py, gen_manifest.py, release_tool.cpp,
-                 package.ps1, sign.ps1, update_keygen.ps1, format.ps1, run-dev.ps1
-installer/       Sonora.wxs -- the MSI, and the shortcut that carries the AppUserModelID
+                 gen_installer_files.py, gen_manifest.py, release_tool.cpp, bench.cpp,
+                 crash_receiver.py, package.ps1, sign.ps1, update_keygen.ps1,
+                 symbolise.ps1, format.ps1, run-dev.ps1
+bench/           the recorded baseline the CI gate compares against, and how to record one
+installer/       Sonora.wxs and crash_reporter.cfg.in -- the MSI, the shortcut that carries
+                 the AppUserModelID, and the configuration CEF reads before any code of ours
+                 runs (generated, so its version comes from the tag like every other)
 docs/adr/        architecture decision records
 ```
 
@@ -550,6 +715,14 @@ Three decisions shape the rest:
   replacing an installation is three operations and not one, so it is a journal
   and a pure decision function, tested by stopping the machine at every point at
   which it could stop.
+- [ADR 0013](docs/adr/0013-a-gate-on-a-metric-you-cannot-measure-twice.md) — a
+  performance gate is a statement about a measurement before it is a statement
+  about code, so the rule that decides a regression lives in a portable library
+  with tests of its own and a metric too noisy to gate is not gated.
+- [ADR 0014](docs/adr/0014-the-crash-handler-is-the-one-already-in-the-process.md) —
+  the crash handler is CEF's, configured by a file rather than by code, and the
+  part that cannot be deferred is publishing the PDBs, because a dump without the
+  PDB of that exact link can never be read.
 - [ADR 0005](docs/adr/0005-events-are-pushed-and-coalesced.md) — events are
   pushed by the shell rather than carried on a persistent query, and the rate
   limiting that decides what the page sees lives in the portable target where it

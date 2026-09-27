@@ -324,21 +324,54 @@ Il pezzo forte. Prenditi le ore extra qui.
 
 #### Settimana 12 — Rollout, crash reporting, performance (10h)
 
-- [ ] **Staged rollout:** il manifest include `rolloutPercent`; il client calcola un bucket
+- [x] **Staged rollout:** il manifest include `rollout.percent`; il client calcola un bucket
       stabile da un ID di installazione (hash) e si aggiorna solo se rientra. Un canale `beta`
       riceve sempre il 100%.
-- [ ] **Crashpad:** handler fuori processo, upload dei minidump a un endpoint locale,
+      — fatto, con una differenza: la versione entra nell'hash insieme all'ID, così allargare
+      una percentuale **aggiunge** installazioni invece di rimescolarle, e ogni release
+      cambia chi va per primo (ADR 0012). Il canale `beta` non esiste: c'è un canale, e
+      inventarne un secondo senza nessuno dentro avrebbe aggiunto un campo e zero
+      informazione.
+- [x] **Crashpad:** handler fuori processo, upload dei minidump a un endpoint locale,
       upload dei simboli (PDB) da CI a ogni release, script che simbolizza un dump
-- [ ] **Benchmark harness** `tools/bench`:
-  - cold start (tempo fino al primo frame utile, misurato con ETW o timestamp interni)
-  - RSS a riposo e durante playback
-  - CPU media su 5 minuti di playback
-  - tempo di scansione di una libreria di riferimento generata sinteticamente
-- [ ] Job CI che fallisce se una metrica peggiora oltre il 10% rispetto alla baseline salvata
-- [ ] **Una vera ottimizzazione:** profila l'avvio, trova il collo di bottiglia, sistemalo,
+      — fatto con il Crashpad che era già nel processo: è dentro `libcef.dll` da week 2, è lo
+      stesso, e aggiungerne un secondo significa due exception filter che litigano su chi
+      possiede il fault (ADR 0014). Quello che non si poteva rinviare non era la raccolta ma
+      i PDB: un minidump senza il PDB di **quella** link è una lista di indirizzi per sempre.
+- [x] **Benchmark harness** `tools/bench`:
+  - ~~cold start (tempo fino al primo frame utile, misurato con ETW o timestamp interni)~~
+  - ~~RSS a riposo e durante playback~~
+  - ~~CPU media su 5 minuti di playback~~
+  - [x] tempo di scansione di una libreria di riferimento generata sinteticamente
+  - [x] tempo di **riscansione** della stessa libreria immutata
+  - [x] dimensione del delta fra due build che differiscono per un file
+  - [x] tempo di applicazione della patch
+
+      Quattro metriche, e solo una delle quattro della lista. Le altre tre vogliono una
+      finestra, una GPU e una scheda audio: un runner CI non ne ha nessuna, e un numero
+      misurato su una macchina che non ne ha è peggio di nessun numero. L'ADR 0013 le nomina
+      come misurate da niente, che almeno è vero.
+- [x] Job CI che fallisce se una metrica peggiora oltre il 10% rispetto alla baseline salvata
+      — fatto, e il 10% non è la parte difficile: una metrica la cui **mediana** non è nota
+      meglio della metà della soglia non viene messa sotto gate affatto, perché lo stesso
+      codice immutato ha misurato da 80.2 a 93.7 ms su sei run mentre ogni singolo run
+      dichiarava il 2% di rumore (ADR 0013).
+- [x] **Una vera ottimizzazione:** profila l'avvio, trova il collo di bottiglia, sistemalo,
       e annota il prima/dopo. Questo numero vale più di tutto il resto del README.
+      — riscansione **−7.2% ± 1.7%**, scansione a freddo −2.0% ± 1.4%: tre allocazioni per
+      file eliminate dal riconoscimento dell'estensione e una tabella hash in meno nel giro
+      delle rimozioni. Il numero interessante però è un altro: misurato *prima e poi dopo*,
+      lo stesso cambiamento dichiarava −17% e −20%. Era deriva della macchina, e a trovarla è
+      stata una metrica di controllo che il cambiamento non può toccare.
 
 **Completato quando:** apri un PR con una regressione volontaria e la CI la blocca.
+**Dimostrato in locale** — rimessa la versione precedente dello scanner, il gate dice
+`library-scan-rescan +22.2% REGRESSED` ed esce 1. **Non ancora in CI**, e manca un solo
+passo: la baseline appartiene alla macchina che misura, quindi va registrata sul runner
+(Actions → ci → `record_baseline`) e committata. Le istruzioni sono in
+[`bench/README.md`](bench/README.md); finché quel file non c'è, il job misura, lo dice e non
+blocca niente — che è il comportamento giusto per un gate senza baseline e il motivo per cui
+non è stato inventato un numero qui dentro.
 
 **→ Commit taggato `v0.9-delivery`.**
 
