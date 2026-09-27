@@ -11,6 +11,7 @@
 namespace {
 
 using sonora::bench::AnyFailure;
+using sonora::bench::AnyMachineIndependentFailure;
 using sonora::bench::BaselineError;
 using sonora::bench::Compare;
 using sonora::bench::Comparison;
@@ -400,4 +401,70 @@ TEST_CASE("a baseline with more samples than it may hold is refused") {
   BaselineError error = BaselineError::kNone;
   CHECK_FALSE(ParseBaseline(json, error).has_value());
   CHECK(error == BaselineError::kBadMetric);
+}
+
+// Which failures a build is allowed to hear as a warning, and which it is not. This is the
+// distinction --report-only leans on, so it is asserted here rather than left to the one
+// branch in the runner that reads it.
+TEST_CASE("a duration that got slower is not the same kind of failure as a count that moved") {
+  // "scan" has a spread: three identical samples would make it deterministic, and a duration
+  // never is on a real machine, so the baseline is given one on purpose.
+  const std::vector<Summary> baseline = {Make("scan", {99, 100, 101}), Exact("size", 1000)};
+
+  GateOptions gate;
+  gate.threshold = 0.10;
+
+  // A slow host. Fails the build, and a build may choose to hear it as a note.
+  const std::vector<Summary> slower = {Make("scan", {198, 200, 202}), Exact("size", 1000)};
+  const auto regressed = Compare(baseline, slower, gate);
+  CHECK(Get(regressed, "scan").verdict == Verdict::kRegressed);
+  CHECK(AnyFailure(regressed));
+  CHECK_FALSE(AnyMachineIndependentFailure(regressed));
+
+  // The delta got bigger. Twenty-seven identical samples on each side, so no host did this:
+  // it fails everywhere, in every mode.
+  const std::vector<Summary> fatter = {Make("scan", {99, 100, 101}), Exact("size", 1200)};
+  const auto grew = Compare(baseline, fatter, gate);
+  CHECK(Get(grew, "size").verdict == Verdict::kRegressed);
+  CHECK(Get(grew, "size").deterministic);
+  CHECK(AnyMachineIndependentFailure(grew));
+  CHECK_FALSE(Get(grew, "scan").deterministic);
+
+  // A benchmark deleted, which is the easiest way to make a gate green.
+  const std::vector<Summary> deleted = {Exact("size", 1000)};
+  const auto missing = Compare(baseline, deleted, gate);
+  CHECK(Get(missing, "scan").verdict == Verdict::kDisappeared);
+  CHECK(AnyMachineIndependentFailure(missing));
+
+  // And a unit changed, which is the same trick with a better disguise: 100 ms and 0.1 s are
+  // the same duration, and comparing them without noticing reports a thousandfold win.
+  const std::vector<Summary> reunited = {Make("scan", {0.099, 0.1, 0.101}, "s"),
+                                         Exact("size", 1000)};
+  const auto renamed = Compare(baseline, reunited, gate);
+  CHECK(Get(renamed, "scan").verdict == Verdict::kDisappeared);
+  CHECK(AnyMachineIndependentFailure(renamed));
+
+  const std::vector<Summary> fine = {Make("scan", {100, 101, 102}), Exact("size", 1000)};
+  const auto unchanged = Compare(baseline, fine, gate);
+  CHECK_FALSE(AnyFailure(unchanged));
+  CHECK_FALSE(AnyMachineIndependentFailure(unchanged));
+}
+
+// A spread of zero and a metric that never varied are not the same statement, and the one
+// that decides whether a build may be failed has to be the second.
+TEST_CASE("a metric measured too coarsely to vary is not a metric that cannot vary") {
+  // A clock too coarse for what it is timing: most samples land on zero, one does not. The
+  // median is 0, so Summarise reports spread 0 rather than dividing by it -- and the samples
+  // plainly disagree with each other.
+  const Summary coarse = Make("tick", {0, 0, 0, 0, 5});
+  CHECK(coarse.median == 0);
+  CHECK(coarse.spread == 0);
+
+  const std::vector<Summary> baseline = {coarse};
+  const std::vector<Summary> worse = {Make("tick", {0, 5, 5, 5, 5})};
+
+  GateOptions gate;
+  gate.threshold = 0.10;
+  const auto comparisons = Compare(baseline, worse, gate);
+  CHECK_FALSE(Get(comparisons, "tick").deterministic);
 }

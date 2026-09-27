@@ -123,6 +123,15 @@ struct Comparison {
   // Signed, as a fraction: +0.2 is twenty percent worse when lower is better.
   double change = 0;
   double noise = 0;  // the two uncertainties added
+
+  // Both sides produced the identical value on every single sample.
+  //
+  // Which is a measured property and not a naming convention, and it is the one that says
+  // whether a failure belongs to this repository or to the computer that happened to run it.
+  // A metric that returned 525,158 bytes twenty-seven times is not measuring a machine; when
+  // it moves, something in the code moved it. A duration never earns this, on any machine.
+  bool deterministic = false;
+
   Verdict verdict = Verdict::kUnchanged;
   std::string note;  // for a person reading a build log, never for a decision
 };
@@ -161,6 +170,21 @@ struct GateOptions {
                                               const GateOptions& options);
 
 [[nodiscard]] bool AnyFailure(std::span<const Comparison> comparisons);
+
+// The subset of AnyFailure that would read the same on any machine, and so the subset a build
+// may never be allowed to treat as a warning.
+//
+// Two ways in. A metric in the baseline that was not measured, or whose unit changed, is a
+// statement about this repository: it is also the easiest way there is to make a performance
+// gate green, so it fails everywhere. And a regression in a metric that is deterministic on
+// both sides cannot be the host, because the host was not what it was measuring.
+//
+// What this leaves out is a duration that got worse, and that is the point: `ubuntu-latest` is
+// a fleet rather than a machine, one commit measured 133 ms on one host and 276 ms on another,
+// and variance between hosts reached twice the regression the gate exists to catch. See
+// ADR 0015.
+[[nodiscard]] bool IsMachineIndependentFailure(const Comparison& comparison);
+[[nodiscard]] bool AnyMachineIndependentFailure(std::span<const Comparison> comparisons);
 
 // The baseline file: a JSON object with a schema number and a list of summaries, written
 // with a trailing newline so that a diff of it reads like a diff.

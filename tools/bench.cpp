@@ -13,7 +13,9 @@
 // without anybody noticing. Those three are in the roadmap's list and in this week's "to
 // come back to", and they are not silently approximated here.
 //
-// Exit code 1 if any metric regressed or disappeared. See ADR 0013 for what counts.
+// Exit code 1 if any metric regressed or disappeared. See ADR 0013 for what counts --
+// and --report-only, for the events where only the second of those two is worth a
+// failure.
 
 #include <algorithm>
 #include <chrono>
@@ -44,6 +46,27 @@ using Clock = std::chrono::steady_clock;
 
 struct Options {
   int repetitions = 9;
+
+  // Iterations run and then thrown away before any are recorded.
+  //
+  // Three, and the number was read off the recorded samples rather than chosen. Every one of
+  // the three baseline runs had the same shape -- the first two iterations of
+  // update-patch-apply four to five times the cost of the rest, the third about a quarter
+  // high, and flat from the fourth:
+  //
+  //     0.878  0.639  0.277  0.247  0.208  0.201  0.204  0.211  0.199
+  //     0.850  1.086  0.267  0.212  0.195  0.211  0.195  0.194  0.194
+  //     0.824  1.018  0.243  0.198  0.194  0.201  0.194  0.193  0.196
+  //
+  // Which is not this project's code: twenty lines that allocate, touch and free a buffer of
+  // the same 8,523,776 bytes reproduce the curve exactly, because glibc serves the first
+  // large allocation from mmap, returns it with munmap, and only after a couple of rounds
+  // raises its own threshold and starts reusing the pages. So the first two samples measured
+  // the kernel faulting in 8.5 MiB, at 0.878 ms against a real cost of 0.195 -- six of the
+  // twenty-seven samples in the baseline, which is what dragged its median to 0.208 and, far
+  // worse, gave its MAD something to be wide about.
+  int warmup = 3;
+
   int files = 4000;
   fs::path baseline;
   fs::path out;
@@ -53,6 +76,21 @@ struct Options {
   std::string only;
   bool update_baseline = false;
   bool append = false;
+
+  // Compare, print the table, and exit 0 anyway if the only complaint is a regression.
+  //
+  // For the events where a red gate is not a decision anybody is about to act on: a push to
+  // main, and a tag. The gate's job is to keep a regression out of main, and it does that on
+  // the pull request; by the time a tag is pushed the code has been in main for days and the
+  // only thing a failure here can do is refuse to build a release.
+  //
+  // It downgrades a slow duration and nothing else. A benchmark that went missing, and a
+  // regression in a metric that was deterministic on both sides, still fail in every mode --
+  // see IsMachineIndependentFailure.
+  bool report_only = false;
+
+  // How many times each timed body actually runs.
+  [[nodiscard]] int iterations() const { return repetitions + warmup; }
 };
 
 double MillisecondsSince(Clock::time_point start) {
@@ -137,7 +175,7 @@ Samples ScanCold(const Options& options, const fs::path& music) {
   samples.name = "library-scan-cold";
   samples.unit = "ms";
   const fs::path database = options.workdir / "cold.sqlite";
-  for (int i = 0; i < options.repetitions; ++i) {
+  for (int i = 0; i < options.iterations(); ++i) {
     std::error_code ec;
     fs::remove(database, ec);
     sonora::library::Library library(database);
@@ -169,7 +207,7 @@ Samples ScanRescan(const Options& options, const fs::path& music) {
   Samples samples;
   samples.name = "library-scan-rescan";
   samples.unit = "ms";
-  for (int i = 0; i < options.repetitions; ++i) {
+  for (int i = 0; i < options.iterations(); ++i) {
     sonora::library::Library library(database);
     sonora::library::Scanner scanner(library, sonora::library::MakeTagLibReader());
     const auto start = Clock::now();
@@ -230,7 +268,7 @@ Samples DeltaSize(const Options& options, const DeltaWork& work) {
   Samples samples;
   samples.name = "update-delta-size";
   samples.unit = "bytes";
-  for (int i = 0; i < options.repetitions; ++i) {
+  for (int i = 0; i < options.iterations(); ++i) {
     samples.values.push_back(static_cast<double>(work.delta.size()));
   }
   return samples;
@@ -240,7 +278,7 @@ Samples PatchApply(const Options& options, const DeltaWork& work) {
   Samples samples;
   samples.name = "update-patch-apply";
   samples.unit = "ms";
-  for (int i = 0; i < options.repetitions; ++i) {
+  for (int i = 0; i < options.iterations(); ++i) {
     sonora::update::PatchError error = sonora::update::PatchError::kNone;
     const auto start = Clock::now();
     const auto rebuilt = sonora::update::ApplyPatch(work.old_archive, work.delta,
@@ -266,10 +304,10 @@ std::string ReadWholeFile(const fs::path& path) {
 
 int Usage() {
   std::fprintf(stderr,
-               "usage: sonora_bench [--repetitions N] [--files N] [--workdir DIR]\n"
-               "                    [--baseline FILE] [--out FILE] [--threshold F]\n"
-               "                    [--noise-budget F] [--only NAME]\n"
-               "                    [--update-baseline] [--append]\n");
+               "usage: sonora_bench [--repetitions N] [--warmup N] [--files N]\n"
+               "                    [--workdir DIR] [--baseline FILE] [--out FILE]\n"
+               "                    [--threshold F] [--noise-budget F] [--only NAME]\n"
+               "                    [--update-baseline] [--append] [--report-only]\n");
   return 2;
 }
 
@@ -290,6 +328,10 @@ int main(int argc, char** argv) {
     std::string text;
     if (flag == "--repetitions" && value(text)) {
       options.repetitions = std::atoi(text.c_str());
+    } else if (flag == "--warmup" && value(text)) {
+      options.warmup = std::atoi(text.c_str());
+    } else if (flag == "--report-only") {
+      options.report_only = true;
     } else if (flag == "--files" && value(text)) {
       options.files = std::atoi(text.c_str());
     } else if (flag == "--workdir" && value(text)) {
@@ -323,21 +365,34 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "sonora_bench: at least three repetitions\n");
     return 2;
   }
+  if (options.warmup < 0) {
+    std::fprintf(stderr, "sonora_bench: --warmup cannot be negative\n");
+    return 2;
+  }
   if (options.workdir.empty()) {
     options.workdir = fs::temp_directory_path() / "sonora-bench";
   }
   fs::create_directories(options.workdir);
 
   const fs::path music = options.workdir / "music";
-  std::fprintf(stderr, "sonora_bench: %d files, %d repetitions, in %s\n", options.files,
-               options.repetitions, options.workdir.string().c_str());
+  std::fprintf(stderr, "sonora_bench: %d files, %d repetitions after %d discarded, in %s\n",
+               options.files, options.repetitions, options.warmup,
+               options.workdir.string().c_str());
   BuildLibrary(music, options.files);
   const DeltaWork delta_work = PrepareDelta(options);
 
   std::vector<Summary> current;
-  const auto run = [&](const Samples& samples) {
+  const auto run = [&](Samples samples) {
     if (!options.only.empty() && samples.name != options.only) {
       return;
+    }
+    // Dropped here rather than inside each benchmark, so that "the first N are not evidence"
+    // is one rule in one place and cannot be true of three benchmarks and forgotten in the
+    // fourth. The discarded samples are never summarised and never reach the baseline file.
+    const auto discard = static_cast<std::size_t>(options.warmup);
+    if (samples.values.size() > discard) {
+      samples.values.erase(samples.values.begin(),
+                           samples.values.begin() + static_cast<std::ptrdiff_t>(discard));
     }
     const Summary summary = Summarise(samples);
     std::fprintf(stderr, "  %-22s median %10.3f %-6s spread %5.2f%%\n", summary.name.c_str(),
@@ -425,6 +480,15 @@ int main(int argc, char** argv) {
                  "If the change is intended, re-run with --update-baseline and commit the\n"
                  "new %s in the same commit as the change that moved it.\n",
                  options.baseline.filename().string().c_str());
+    if (options.report_only && !AnyMachineIndependentFailure(comparisons)) {
+      std::fputs(
+          "sonora_bench: --report-only, so this is a note and not a failure.\n"
+          "Every metric the baseline knows about was measured, and what moved is a\n"
+          "duration whose value depends on which host ran it. A metric that is the\n"
+          "same number every sample would have failed here anyway. See ADR 0015.\n",
+          stderr);
+      return 0;
+    }
     return 1;
   }
   std::fputs("\nsonora_bench: nothing regressed\n", stderr);

@@ -42,6 +42,14 @@ std::string Magnitude(double fraction) {
   return buffer;
 }
 
+// Whether a summary's samples are all the same number.
+bool Identical(const Summary& summary) {
+  return !summary.samples.empty() && std::all_of(summary.samples.begin(), summary.samples.end(),
+                                                 [&summary](const double value) {
+                                                   return value == summary.samples.front();
+                                                 });
+}
+
 }  // namespace
 
 double Median(std::span<const double> values) {
@@ -196,6 +204,11 @@ std::vector<Comparison> Compare(std::span<const Summary> baseline,
     }
 
     comparison.noise = before->uncertainty + now.uncertainty;
+    // Every sample identical, asked of the samples rather than of the derived spread: a
+    // metric whose median rounds to zero reports spread zero as well, and that one is coarse
+    // rather than exact. The comparison is exact on purpose -- the question is whether the
+    // measurement ever produced a different number, not whether it produced a close one.
+    comparison.deterministic = Identical(*before) && Identical(now);
     if (before->median > 0) {
       comparison.change = now.median / before->median - 1.0;
       if (!now.lower_is_better) {
@@ -247,6 +260,17 @@ std::vector<Comparison> Compare(std::span<const Summary> baseline,
 bool AnyFailure(std::span<const Comparison> comparisons) {
   return std::any_of(comparisons.begin(), comparisons.end(),
                      [](const Comparison& c) { return IsFailure(c.verdict); });
+}
+
+bool IsMachineIndependentFailure(const Comparison& comparison) {
+  if (comparison.verdict == Verdict::kDisappeared) {
+    return true;
+  }
+  return comparison.verdict == Verdict::kRegressed && comparison.deterministic;
+}
+
+bool AnyMachineIndependentFailure(std::span<const Comparison> comparisons) {
+  return std::any_of(comparisons.begin(), comparisons.end(), IsMachineIndependentFailure);
 }
 
 std::string EncodeBaseline(std::span<const Summary> summaries) {
