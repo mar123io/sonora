@@ -1222,3 +1222,278 @@ in silenzio"*.
 - **I 10 minuti continui senza underrun** non li ho ancora misurati
   (settimana 5), le **copertine arrivano solo dai tag**, i **file OneDrive** non
   sono mai stati provati, e `localhost:9222` **resta bianco** (settimana 4).
+
+---
+
+## Settimana 11 — Updater con delta e rollback
+
+**Pianificata:** 30 nov - 6 dic 2026 · **Effettiva:** 27 set 2026
+**Stima:** 11 h · **Effettivo:** ___ h
+**Tag:** `v0.6.0`
+
+### Obiettivo
+
+Che cambiare tre righe di C++ non costi 152 MB a chi ha già Sonora installato. E che
+una versione che non parte torni indietro da sola.
+
+### Fatto
+
+- [x] **Nessun servizio**: il server degli update è un file JSON firmato (ADR 0009)
+- [x] Firma **Ed25519** verificata *prima* di dare i byte a un parser
+- [x] Formato archivio `.spk`: i file del payload, in ordine, **non compressi** (ADR 0010)
+- [x] Il client **ricostruisce** l'archivio della propria versione dai file installati
+- [x] Delta con `zstd --patch-from`, `nbWorkers = 0` e la misura nel commento
+- [x] Giornale con macchina a stati pura, e **swap che non è atomico** (ADR 0011)
+- [x] Rollback automatico: bandierina di avvio, un tentativo, lista dei rifiutati
+- [x] `sonora-updater.exe`, processo separato che si copia fuori dall'albero
+- [x] `sonora_release` (pack/compress/expand/delta) e `tools/gen_manifest.py`
+- [x] Job CI che pubblica pacchetto, delta e manifest firmato con la Release
+- [x] I tre test end-to-end del roadmap, **su tutte e tre le piattaforme**
+
+Il numero della settimana, prodotto dal codice che spedisce e non da una prova a mano:
+
+| | |
+|---|---|
+| Archivio non compresso (`.spk`) | 223.410.842 B — 213,1 MiB |
+| Pacchetto scaricabile (`.spk.zst`) | 49.320.420 B — 47,0 MiB |
+| **Delta fra due versioni che differiscono per tre righe** | **86.053 B — 84,0 KiB** |
+| Delta come frazione del pacchetto | **0,0385 %** |
+
+### La misura che ha deciso il progetto
+
+L'ho fatta prima di scrivere una riga, perché tutta la settimana dipendeva da un
+numero, e ha cambiato il progetto due volte.
+
+Payload finto di 213 MiB con la forma di quello vero: una libreria da 137 MiB al posto
+di `libcef.dll`, un eseguibile da 631 KiB, qualche file in sottocartelle. La v2
+differisce dalla v1 per **una costante stringa e un'espressione aritmetica** — e 472
+KiB di byte dell'eseguibile cambiano, perché tutto quello che sta dopo la modifica
+slitta di otto byte. Tre forme di contenitore, lo stesso comando fra ogni coppia:
+
+| Contenitore | Dimensione | Delta | % |
+|---|---|---|---|
+| Archivio store-only | 213,1 MiB | **127,8 KiB** | 0,06 % |
+| Compresso per file (`zip -9`) | 64,5 MiB | **133,7 KiB** | 0,20 % |
+| Compresso solido (un frame `zstd -19`) | 47,0 MiB | **5,04 MiB** | 10,7 % |
+
+**Non è la compressione che uccide il delta: è la compressione solida.** Un contenitore
+che comprime ogni membro per conto suo lascia identici i membri non cambiati, e il patch
+resta grande come il file cambiato. Uno che comprime tutto in un flusso ricodifica tutto
+quello che sta a valle del primo byte diverso: quaranta volte peggio, per tre righe.
+
+Un MSI con `MediaTemplate EmbedCab="yes"` è la terza riga. Quindi **l'installer non può
+essere la cosa che si patcha** — e c'è una seconda ragione che non ha bisogno di
+misure: aggiornare eseguendo un installer significa chiedere a Windows Installer di
+fare lo swap, e allora *quando* i file si spostano, chi tiene la transazione e cosa
+succede se manca la corrente diventano semantica dell'MSI invece che nostra. È tutto
+l'ADR 0011 regalato a qualcun altro.
+
+La seconda sorpresa è arrivata dallo stesso esperimento e non c'entra con i
+contenitori:
+
+| Impostazione | Patch |
+|---|---|
+| `-9`, thread scelti dal tool | 127,8 KiB |
+| `-17`, thread scelti dal tool | 323,5 KiB |
+| `-19`, thread scelti dal tool | 178,9 KiB |
+| `-19 --single-thread` | **84,3 KiB** |
+
+La compressione multithread taglia l'input in job compressi indipendentemente, e un
+patch è fatto **solo** di match a lunga distanza: i thread che rendono veloce la
+compressione sono i thread che buttano via i match. Due volte più grande a livello 19,
+quasi quattro a 17, e **non monotono nel livello** — che è come si comporta una
+manopola quando è la manopola sbagliata. `ZSTD_c_nbWorkers = 0`, scritto esplicito, con
+questa tabella nel commento accanto.
+
+### Cosa è costato più del previsto
+
+**1. Il roadmap chiedeva un backend e la risposta giusta era "nessuno dei due".**
+`services/releases` in C++ con Drogon, oppure in Go — «scegli e motiva nell'ADR». Ci ho
+messo un'ora a capire che la domanda nascondeva la domanda: un updater ha bisogno di una
+risposta, *dato un canale, una piattaforma e la versione che sto eseguendo, cosa devo
+installare*, e gli input sono tre valori enumerabili con un dominio di decine. Un
+servizio calcola quella risposta a ogni richiesta; un file la precalcola una volta, per
+ogni input. Sono entrambi corretti. La differenza è tutto quello che deve esistere
+intorno: un processo, un host, un deploy, un certificato, un conto da pagare e una
+persona che si accorge quando smette. E un'asimmetria che chiude la questione: **un file
+statico non può essere giù mentre la corsa di CI che l'ha prodotto era verde.**
+
+C'è anche un modo di fallire che non voglio costruire. Un update server è l'unico
+componente di un'applicazione desktop con cui parla *ogni* installazione, su timer, per
+sempre, comprese quelle di tre anni fa. La vita attesa onesta di un backend hobbistico è
+più corta della vita attesa onesta di una copia installata del programma.
+
+**2. Il buffer passato due volte.** Il primo test sul patch diceva "due payload identici
+danno un patch quasi nullo", e falliva: 262.159 byte per 256 KiB di input. Ho perso venti
+minuti sul `windowLog` prima di accorgermi che passavo *lo stesso vettore* come vecchio e
+come nuovo. Con il prefisso sovrapposto all'input zstd non trova nessun match: 262.159
+byte contro 36 con una seconda copia. **Non falla — smette di essere un patch**, e
+l'unico sintomo è un numero in un log che nessuno legge. Adesso è un errore con un nome
+(`kOverlappingInputs`) e un commento che riporta le due misure, perché un chiamante che
+mappa in memoria un file e passa la stessa mappatura ai due argomenti spedirebbe delta a
+dimensione intera per sempre.
+
+**3. Il bug che avrebbe cancellato l'unica installazione presente.** L'ho trovato il test
+esaustivo, non io. Giornale a `idle`, nessuna `Sonora/`, ma `Sonora.old/` accanto: la mia
+prima versione di `NextStep` la spazzava via come spazzatura, perché "idle" significa
+"niente in volo". È uno stato **raggiungibile**: un rollback che ha completato il rename
+e ha perso corrente prima di scrivere il giornale lascia esattamente questo, perché il
+giornale che stava per scrivere è quello che c'è già. Ora è l'unico caso del ramo `idle`
+che fa qualcosa, e la riga che lo fa ha sopra tre righe di commento che spiegano come si
+arriva lì.
+
+**4. La bandierina non è un timer, e il roadmap diceva timer.** «La nuova versione deve
+scrivere un flag "avvio riuscito" entro 20 s». Non lo fa, e vale scriverlo: venti secondi
+misurano la macchina, non il programma. Su un portatile freddo con un antivirus che legge
+140 MiB di CEF per la prima volta, una versione perfettamente buona sfora e viene
+riportata indietro — e un rollback causato dalla lentezza è un bug che compare solo
+sull'hardware che meno se lo può permettere. Quindi non c'è nessun timer: la nuova
+versione scrive la bandierina quando raggiunge lo stato che *dimostra* che l'update ha
+funzionato, cioè finestra su e pagina caricata, un evento che esiste dalla settimana 2. Se
+non ci arriva, la bandierina non compare e **è l'avvio successivo che se ne accorge**. La
+scadenza non è una durata: è "prima che il processo finisca".
+
+**5. Windows non risponde male alla domanda sul bit di eseguibile: risponde una cosa
+sbagliata.** L'unico dei 278 test che ha fallito su Windows, dopo che tutti e 278 passavano nel container. `std::filesystem` di
+MSVC modella un solo attributo — sola lettura — e per ogni file scrivibile riporta
+`perms::all`, quindi **ogni** membro di un payload pacchettizzato su Windows si portava il
+flag di eseguibile, `.pak` e `.dat` compresi. Il test lo ha visto dalla parte giusta: non
+ha fallito sull'eseguibile che *doveva* averlo, ha fallito sul file che non doveva. Un
+flag messo su tutto non dice niente, e un formato la cui unica bandierina non dice niente
+sulla piattaforma per cui il payload è costruito è peggio di un formato senza.
+
+La correzione non è un `#ifdef` — l'ADR 0002 non lo permette lì, e non servirebbe: la
+domanda non è "su che sistema operativo siamo" ma "questo filesystem sa distinguere un
+file eseguibile da uno normale". Quindi `ExecuteBitIsMeaningful` la chiede a un file che
+crea lui, vuoto, accanto all'archivio che sta scrivendo: se un file appena creato e vuoto
+si dichiara già eseguibile, il filesystem non sta riportando quel bit, se lo sta
+inventando. Su Linux dice sì, su Windows dice no, e su Windows il formato non porta
+bandierine invece di portarne 242 che mentono. **La prima versione del test si limitava a
+saltare quando il bit non tornava indietro; quella di adesso asserisce su entrambi i tipi
+di filesystem, che è la differenza fra un test e una nota.**
+
+### Cosa ho imparato
+
+- **Misura il contenitore prima di scegliere l'algoritmo.** Avevo l'ipotesi giusta per la
+  ragione sbagliata: pensavo che la compressione rovinasse i delta, ed è la compressione
+  *solida*. La differenza fra le due non è accademica, è la differenza fra pubblicare due
+  artefatti e pubblicarne uno.
+- **Una cosa che deve essere riproducibile non può avere un compressore nel percorso.**
+  Il client ricostruisce l'archivio della propria versione dai file installati, per poterlo
+  patchare, e ci riesce solo perché nel formato non c'è **niente** su cui due macchine
+  possano non essere d'accordo: ordine dei membri dai percorsi ordinati, nessun timestamp,
+  nessuna compressione, nessun allineamento. La settimana 10 ha reso riproducibile una
+  build fissando quattro strumenti; questo è lo stesso argomento applicato a un artefatto
+  che deve essere riproducibile sul portatile di uno sconosciuto, dove non è fissato niente.
+- **Un'ottimizzazione con una precondizione verificata non è una dipendenza.** La
+  ricostruzione viene confrontata con l'hash del manifest *prima* di patchare; se non
+  combacia — un file toccato da un antivirus, un update lasciato a metà — il client scarica
+  il pacchetto intero. Il percorso del delta può sbagliarsi quanto vuole: costa byte, non
+  correttezza.
+- **Firma i byte, non l'oggetto.** La firma copre gli ottetti del manifest come sono
+  arrivati, ed è verificata *prima* del parser JSON. È per questo che è staccata e che non
+  esiste un campo `"signature"` dentro il documento: una firma dentro la cosa che firma
+  vuol dire canonicalizzare prima, e la canonicalizzazione è un secondo parser con i suoi
+  bug, che gira prima del controllo, su input non autenticato.
+- **"Atomico" è una parola che nasconde tre operazioni.** Un `MoveFileEx` è atomico; un
+  update sono due rename e una cancellazione, e fra il primo e il secondo **non esiste
+  nessuna copia installata di Sonora.** La finestra è larga microsecondi e alla macchina
+  non importa. Quello che serviva non era uno swap, era una sequenza di passi idempotenti
+  con un registro durevole di quale era inteso — cioè un giornale, cioè la stessa idea del
+  WAL dello SQLite due cartelle più in là.
+- **Un errore precoce ed economico batte un errore giusto e caro.** Un tentativo, non tre.
+  Una versione che non parte una volta *potrebbe* essere una coincidenza, e preferire
+  comunque quella precedente è lo sbaglio che costa poco: il rollback sono due rename e un
+  riavvio, il manifest offrirà di nuovo la stessa versione, e nel frattempo la persona ha
+  un programma che funziona. Aspettare di essere sicuri costa alla persona
+  un'applicazione rotta. Quando i due errori sono così sbilanciati, prendi quello presto.
+- **La parte difficile era testabile senza Windows, e quindi l'ho testata.** `NextStep`
+  prende un giornale e quattro booleani. Il che significa che l'iniezione di crash è un
+  contatore che ferma il ciclo dopo l'n-esima operazione, per ogni n, e l'invariante si
+  verifica ripartendo da lì: *in ogni punto in cui la macchina può fermarsi esiste
+  esattamente un'installazione completa raggiungibile, e il recupero la raggiunge.* Non
+  "di solito". Ogni n, compresi quelli in mezzo a un rollback che sta a sua volta
+  recuperando da un update fallito.
+
+### Numeri di verifica
+
+- **91 casi, 5.887 asserzioni**, puliti sotto ASan + UBSan + LSan.
+- **Mutation testing: 40 mutanti, 36 uccisi.** Vale più il conto di quelli che sono
+  sopravvissuti. Quattro, e tutti e quattro **equivalenti**: togliere il controllo
+  esplicito su `".."` non cambia niente perché la regola sul punto finale rifiuta già
+  `.` e `..`; togliere il rifiuto del messaggio vuoto non cambia niente perché libsodium
+  lo rifiuta comunque; togliere il controllo sull'`@` nell'authority non cambia niente
+  perché il controllo sui caratteri dell'host lo rifiuta; e mettere `nbWorkers = 4` non
+  cambia niente su un payload che un test unitario possa permettersi, perché i job di
+  zstd sono più grandi dell'input — la prova su quel numero è la misura dell'ADR 0010,
+  e quello che il test compra è che cambiarlo si veda in un diff che tocca un test e
+  dice perché.
+- **Sei test esistono perché li ha chiesti la mutation testing, non io.** Il rifiuto di
+  un flag ignoto lo controllava solo il codificatore e non il lettore; i link simbolici,
+  il bit di eseguibile e il file temporaneo del giornale non erano controllati affatto; e
+  gli ultimi due controlli di hash — quello sull'archivio e quello sul pacchetto — non
+  erano raggiunti da nessun test, perché ogni corruzione che provavo la prendeva prima
+  la checksum di zstd o l'hash della ricostruzione. Servivano due release che si
+  contraddicono da sole: un manifest che nomina il pacchetto giusto e l'archivio
+  sbagliato, e uno che nomina l'archivio giusto e il pacchetto sbagliato. **Tre controlli
+  di hash in fila sembrano ridondanti finche' non provi a togliere quello in mezzo.**
+- Il test esaustivo del giornale copre **tutti** gli stati: 7 stadi × 8 combinazioni delle
+  tre cartelle × 3 cose che la bandierina può dire × 2 conteggi di tentativi × 2 esiti di
+  avvio, ognuno portato a termine su più sessioni. Comprese le combinazioni irraggiungibili,
+  perché "irraggiungibile" è esattamente l'ipotesi che si rompe su un portatile con un
+  rollback a metà.
+- I **tre test end-to-end** del roadmap girano su Windows, macOS e Linux: albero vero,
+  archivio vero, firma Ed25519 vera su un manifest vero, patch zstd vero, rename veri,
+  giornale vero. Il `Fetcher` legge da una cartella invece che da un socket — la stessa
+  sostituzione che i test unitari fanno per il filesystem, e per la stessa ragione. Quello
+  che resta non provato sono le venti righe che chiamano WinHTTP; quello che è provato è
+  tutto ciò che potrebbe distruggere l'installazione di qualcuno.
+- Il patch da 86.053 byte sul payload da 213 MiB è verificato dal generatore stesso:
+  `sonora_release delta` riapplica il patch appena prodotto e confronta i byte, perché un
+  patch che non si applica è una release che silenziosamente fa scaricare 47 MiB a tutti
+  quelli che sono sulla versione vecchia, e niente della release sembrerebbe sbagliato.
+- **Il test del delta corrotto fa meglio di quello che il roadmap chiedeva.** Chiedeva
+  «nessuna installazione»; qui il delta corrotto invalida *il delta*, non la release — il
+  pacchetto c'è, il suo hash è nel manifest firmato, e un update che arriva come 47 MiB
+  invece di 84 KiB non è un fallimento. Il test che verifica «nessuna installazione» è
+  quello con **delta e pacchetto entrambi corrotti**, e lì l'installazione resta intatta,
+  il giornale torna a `idle` e l'applicazione parte.
+
+### Da riprendere
+
+- **La chiave di firma è quella di sviluppo.** La sua metà privata è stata generata su una
+  macchina che non è un archivio di segreti, ed esiste perché i test e la corsa
+  end-to-end avessero qualcosa di vero da verificare. Va sostituita prima della prima
+  release che qualcun altro installa (`tools/update_keygen.ps1`), e il job `release`
+  **rifiuta** di pubblicare un manifest finché il binario si fida ancora di quella chiave:
+  una nota in un commento non è un controllo. Finché il segreto non c'è, la Release esce
+  senza manifest — e un manifest non firmato sarebbe peggio di nessun manifest, perché
+  sarebbe un file all'indirizzo che ogni installazione interroga, che dice quello che vuole
+  chiunque possa scriverci.
+- **La chiave sta in un segreto del repository, ed è più debole di una chiave offline.**
+  Chi può far girare un workflow qui può firmare una release. Il modo di fallire è
+  *compromettere l'account GitHub è compromettere il canale degli update*, ed è scritto
+  nell'ADR 0009 invece di essere scoperto dopo.
+- **macOS e Linux non hanno updater**, e `shared/update_host_none.cpp` lo dice invece di
+  finirla. Quattro delle cinque funzioni sarebbero dieci righe; quella che manca è tutto il
+  resto — un canale firmato, una pipeline di pacchetti, un installer da sostituire e uno
+  swap di cui qualcuno abbia provato i modi di fallire su quella piattaforma.
+- **Se l'updater della versione nuova è rotto, niente torna indietro.** La decisione di
+  rollback la prende `Sonora.exe`, che è il binario di cui è in dubbio la capacità di
+  partire. Se non arriva alle sue prime dieci righe, il giornale non viene letto. È il
+  rischio residuo di ogni updater in-place senza un servizio sempre residente, e la
+  mitigazione onesta è quella che c'è già: l'MSI esiste ancora, e reinstallarlo è un
+  recupero supportato e documentato (`docs/updater-states.md`).
+- **Il rollout a percentuale non c'è.** La forma però è giusta: rilasciare al 10% è un
+  *numero nel manifest* — il client fa l'hash del proprio id di installazione e confronta
+  con una soglia — non un comportamento di un server. La settimana 12 aggiunge il campo,
+  non aggiunge un servizio.
+- **Un update ha bisogno di spazio per due payload e un patch**: circa 530 MiB liberi per
+  un'installazione di 213 MiB. L'updater controlla prima e lo dice, invece di fallire a
+  metà.
+- Restano dalle settimane precedenti: il runtime di Visual C++ **fuori** dall'installer e
+  mai provato su una macchina pulita, `actions/checkout@v4` su Node 20 deprecato, la
+  **sandbox di CEF spenta** (ADR 0003), i **10 minuti continui senza underrun** non
+  misurati, le **copertine solo dai tag**, i **file OneDrive** non provati, `localhost:9222`
+  **bianco**, il caso del monitor staccato provato solo nella policy, e `Forget()` che
+  esiste e non viene mai chiamato.

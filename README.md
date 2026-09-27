@@ -56,7 +56,9 @@ and a versioned bridge between them so the two can ship independently.
 | One version number, from the git tag, reaching the binary and the MSI | working |
 | Every tool version pinned: CEF, vcpkg registry, clang-format, WiX | working |
 | Code signing | demonstrated with a self-signed certificate — see below |
-| Delta updater with signature + rollback | week 11 |
+| Delta package, signed manifest, atomic swap with rollback | working — **84 KiB instead of 152 MiB** for three lines of C++ |
+| Release signing key | **the development key; must be replaced before a real release** |
+| Updater on macOS and Linux | the decisions are built and tested there; the five platform calls say no |
 | Staged rollout, crash reporting, perf gates | week 12 |
 
 Performance numbers go here in week 12, together with the script that
@@ -393,6 +395,107 @@ check that passes locally and fails in CI is worse than no check.
 
 ---
 
+### Updating, and what an update is allowed to break
+
+An installed copy of Sonora is 152 MiB, of which about 140 MiB is CEF. Changing three
+lines of C++ produces a new 152 MiB installer, and asking everybody to download it again
+is the problem this part exists to solve.
+
+```
+Sonora-0.6.0-win-x64.spk       213.1 MiB   the payload, uncompressed, never served
+Sonora-0.6.0-win-x64.spk.zst    47.0 MiB   the same bytes, for downloading
+0.5.0-0.6.0-win-x64.patch        84.0 KiB   from the previous version
+```
+
+Those are real numbers from the release job, and the last one is the point: **0.0385 % of
+the package it rebuilds.**
+
+#### How it works
+
+There is no update server. The manifest is a signed JSON file attached to the newest
+published release, at a URL that does not change:
+
+```
+https://github.com/mar123io/sonora/releases/latest/download/manifest.json
+https://github.com/mar123io/sonora/releases/latest/download/manifest.json.sig
+```
+
+`sonora-updater.exe --check` fetches those two, verifies the Ed25519 signature **over the
+manifest's bytes before any parser sees them**, and only then reads what it says. The
+manifest carries a size and a BLAKE2b-256 hash for every artefact, so one signature covers
+every byte that will ever be downloaded.
+
+If there is a newer version, the updater packs the *installed* tree into an archive of its
+own and checks that against the hash the manifest publishes for the version that is
+running. If they match, it downloads the patch — 84 KiB — and applies it. If they do not
+match, for any reason at all, it downloads the 47 MiB package instead. The delta path is an
+optimisation with a checked precondition, never a correctness dependency.
+
+Nothing moves until the application exits. Then:
+
+```
+Sonora/            the installation
+Sonora.new/        the staged tree: unpacked, hashed, complete
+Sonora.old/        the previous tree, kept until the new one has started
+Sonora.update/     the journal, and the launch flag
+```
+
+A swap is two renames and a delete, and between the first two there is no installed copy of
+Sonora at all — so every step is written to a journal before it is performed, and a process
+starting up finishes or undoes whatever the journal describes.
+[`docs/updater-states.md`](docs/updater-states.md) has the state machine, the table of
+"journal says X, disk shows Y", and what to do by hand if an installation gets stuck.
+
+The new version proves itself by starting: when its window is up and the page has loaded it
+writes a flag naming its own version. There is no twenty-second timer anywhere — a deadline
+in seconds measures the machine, not the program, and the machine least able to meet it is
+the one where a good version would be thrown away. If the flag never appears, the start
+*after* that one rolls the previous version back and adds the new one to a refused list, so
+the same version is not downloaded and reverted every six hours forever.
+
+#### Trying it without a release
+
+Three things are worth running, and none of them needs a server:
+
+```powershell
+# What a release job produces, over any directory. Visual Studio puts the executable
+# under bin/Release and Ninja under bin, so find it rather than guess:
+$tool = (Get-ChildItem build/win-release -Recurse -Filter sonora_release.exe)[0].FullName
+& $tool pack build/win-release/stage build/a.spk
+& $tool compress build/a.spk build/a.spk.zst
+& $tool delta build/old.spk build/a.spk build/a.patch
+& $tool inspect build/a.spk
+
+# The three tests from the roadmap -- install 1.0.0, be offered 1.0.1, verify; a corrupt
+# delta; a version that will not start. Real trees, real signatures, real renames.
+ctest --preset win-release -R "end to end"
+```
+
+`sonora_release delta` re-applies the patch it just produced and compares the bytes before
+writing it out, because a patch that does not apply is a release that silently makes
+everybody download 47 MiB and looks entirely healthy.
+
+#### What is not done
+
+- **The signing key in this tree is a development key.** Its private half has been outside a
+  secret store, so it is not a signing key. `tools/update_keygen.ps1` makes a real one, and
+  the release job refuses to publish a manifest while the binary still trusts the
+  development one — a note in a comment is not a check. Until a key is in the repository
+  secret, releases go out with no manifest, and installed copies see no updates.
+- **The key lives in a repository secret**, which is weaker than an offline key: whoever can
+  run a workflow here can sign a release. The trade is written down in
+  [ADR 0009](docs/adr/0009-the-update-server-is-a-signed-file.md) rather than discovered
+  later.
+- **macOS and Linux have no updater.** Everything above `src/update/` is built and tested on
+  both — the end-to-end tests run there too — and `shared/update_host_none.cpp` says no to
+  the five platform calls rather than implementing four of them and shipping an application
+  that looks like it can update itself.
+- **If the new version's own updater is broken, nothing rolls back.** The decision is made
+  by `Sonora.exe`, which is the binary whose ability to start is in question. Reinstalling
+  the MSI is the documented recovery.
+
+---
+
 ## Layout
 
 ```
@@ -401,14 +504,17 @@ src/state/       the durable store: play history and stable ids (ADR 0008)
 src/audio/       ring buffer, decoders, engine — no OS, no CEF, no device
 src/assets/      the web bundle as bytes: embedded table + the two stores that serve it
 src/bridge/      the native<->web protocol: envelope, errors, generated dispatch — no CEF
+src/update/      manifest, signature, archive, patch, journal — the updater's decisions, no OS
 src/platform/    iface/ + win/ + mac/ + linux/ + shared/ — the only place #ifdef on the OS is allowed
 src/shell/       the executable: window, CEF host, scheme handler, helper process
+src/updater/     sonora-updater: the one process allowed to move the installation
 ui/              the web interface (TypeScript + Vite)
 tests/           Catch2, runs against core and assets on every platform
 schema/          bridge.schema.json — the single source of truth for the bridge
 cmake/           CEF provisioning and pinning, asset and bridge generation
 tools/           pin_cef.py, embed_assets.py, gen_bridge.py, make_icon.py,
-                 gen_installer_files.py, package.ps1, sign.ps1, format.ps1, run-dev.ps1
+                 gen_installer_files.py, gen_manifest.py, release_tool.cpp,
+                 package.ps1, sign.ps1, update_keygen.ps1, format.ps1, run-dev.ps1
 installer/       Sonora.wxs -- the MSI, and the shortcut that carries the AppUserModelID
 docs/adr/        architecture decision records
 ```
@@ -432,6 +538,18 @@ Three decisions shape the rest:
 - [ADR 0008](docs/adr/0008-two-stores-with-opposite-policies.md) — what the user
   did lives in a different store from what their files say, with the opposite
   durability policy, and the boundary between the two is the file path.
+- [ADR 0009](docs/adr/0009-the-update-server-is-a-signed-file.md) — the update
+  server is a signed static file and not a service, the signature covers the
+  bytes rather than the parsed object, and the trust root is a public key in the
+  binary rather than a certificate chain.
+- [ADR 0010](docs/adr/0010-the-delta-is-taken-over-an-uncompressed-archive.md) —
+  solid compression destroys a delta (measured: 128 KiB becomes 5 MiB), so the
+  update artefact is an uncompressed archive, compression is transport only, and
+  the client rebuilds its own archive from the files on its disk.
+- [ADR 0011](docs/adr/0011-the-swap-is-not-atomic-so-it-is-a-journal.md) —
+  replacing an installation is three operations and not one, so it is a journal
+  and a pure decision function, tested by stopping the machine at every point at
+  which it could stop.
 - [ADR 0005](docs/adr/0005-events-are-pushed-and-coalesced.md) — events are
   pushed by the shell rather than carried on a persistent query, and the rate
   limiting that decides what the page sees lives in the portable target where it

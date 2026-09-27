@@ -303,12 +303,12 @@ colpo dopo sei settimane senza essere letta.
 
 Il pezzo forte. Prenditi le ore extra qui.
 
-- [ ] **Backend** `services/releases` (C++ con Drogon, oppure Go — scegli e motiva nell'ADR):
+- [x] ~~**Backend** `services/releases`~~ — **nessun servizio**, e l'ADR 0009 dice perché: la domanda ha tre input enumerabili e la risposta cambia solo quando si taglia una release, quindi è un file. Endpoint previsto, per confronto:
   - `GET /v1/manifest?channel=stable&version=X&platform=win-x64`
   - risponde con versione target, URL del full package, URL del delta da X, hash, firma
-- [ ] **Generatore delta** in CI: `zstd --patch-from=vecchio.pkg nuovo.pkg` per ogni coppia
+- [x] **Generatore delta** in CI: `zstd --patch-from=vecchio.pkg nuovo.pkg` per ogni coppia
       di versioni recenti; misura e pubblica il rapporto di compressione
-- [ ] **Client updater** (processo separato `sonora-updater.exe`):
+- [x] **Client updater** (processo separato `sonora-updater.exe`):
   1. controlla il manifest all'avvio e ogni 6 h
   2. scarica il delta (fallback al full package se manca o fallisce)
   3. applica la patch in `%LOCALAPPDATA%\Sonora\staging`
@@ -316,11 +316,11 @@ Il pezzo forte. Prenditi le ore extra qui.
   5. atomic swap alla chiusura dell'app
   6. **rollback:** la nuova versione deve scrivere un flag "avvio riuscito" entro 20 s;
      se al riavvio successivo il flag manca, l'updater ripristina la versione precedente
-- [ ] Test end-to-end: installa 1.0.0 → server offre 1.0.1 → verifica che sia aggiornata
-- [ ] Test negativo: delta corrotto → nessuna installazione, app resta funzionante
-- [ ] Test negativo: build 1.0.1 che crasha subito → rollback automatico a 1.0.0
+- [x] Test end-to-end: installa 1.0.0 → server offre 1.0.1 → verifica che sia aggiornata
+- [x] Test negativo: delta corrotto → nessuna installazione, app resta funzionante
+- [x] Test negativo: build 1.0.1 che crasha subito → rollback automatico a 1.0.0
 
-**Completato quando:** i tre test sopra girano in CI in un job dedicato.
+**Completato quando:** i tre test sopra girano in CI in un job dedicato. **Fatto**, con tre scostamenti dichiarati: il backend non esiste (il manifest è un file statico firmato, ADR 0009), il delta si prende sul payload e non sull'MSI (ADR 0010, misurato), e la bandierina di avvio non ha un timer di 20 s ma un traguardo (ADR 0011). I tre test girano dentro `sonora_tests` su tutte e tre le piattaforme, non solo su Windows.
 
 #### Settimana 12 — Rollout, crash reporting, performance (10h)
 
