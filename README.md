@@ -1,23 +1,118 @@
 # Sonora
 
-A native C++ desktop shell that hosts a web UI in CEF — with its own audio
-engine, operating-system media integration, delta updates and a signed release
-pipeline.
+**A native C++ desktop shell that hosts a web UI in CEF** — with its own audio engine,
+operating-system media integration, delta updates and a signed release pipeline. It exists to
+answer one question end to end: what does it actually take to *ship* a desktop application,
+rather than to demo one?
 
-Sonora is built the way large desktop applications actually are: a native core
-that owns audio and platform integration, a web layer that owns the interface,
-and a versioned bridge between them so the two can ship independently.
+<!-- GIF -->
 
-> **Status: week 10 of 13.** The shell hosts a Chromium view, serves the UI over
-> a custom `sonora://` scheme, and the two talk over a typed, versioned bridge
-> generated from one schema. It plays music — a searchable library, a queue, and
-> a gapless join between two tracks performed inside the device callback — and
-> it behaves like a desktop application: the media panel and the media keys, a
-> tray icon, taskbar thumbnail buttons, a jump list, one instance per session,
-> `sonora://` links from the browser, and a window that reopens where you left
-> it. It also ships: a tag builds an MSI on a clean machine and attaches it to
-> a draft release, and every version it depends on is pinned. See
-> [ROADMAP.md](ROADMAP.md) for what lands when.
+---
+
+## How it fits together
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
+  <img alt="Sonora's processes, the boundaries between them, and what it keeps on disk"
+       src="docs/images/architecture-light.svg">
+</picture>
+
+Three boundaries carry the design, and each one is a decision with an ADR behind it.
+
+**Native against web.** The interface is a web application; everything it cannot do — audio,
+the media panel, the tray, the filesystem — is native. Between them is one generated protocol,
+and **no file path ever crosses it**: the page asks for track 412, never for
+`C:\Users\mario\Music\…`. That is what makes the web layer a layer rather than a liability.
+
+**The process that decides against the process that acts.** The updater decides in a portable
+library with no filesystem in it, and a separate executable — running from outside the
+directory it is about to replace — does the moving. The same seam appears in the benchmark
+gate: the rule that decides a regression lives in a library with its own tests, not in the
+tool that measures.
+
+**The application against the operating system.** Every `#ifdef` on the OS lives under
+`src/platform/`, and the macOS and Linux CI jobs build only the portable targets — so the day
+something platform-specific leaks out is the day the build goes red, not the day somebody
+tries to port it.
+
+---
+
+## What it costs to update
+
+An installed copy is 152 MiB, of which about 140 MiB is Chromium. These are real numbers from
+the release job, for two builds that differ by three lines of C++:
+
+| artefact | size | |
+| --- | ---: | --- |
+| `Sonora-0.6.0-win-x64.spk` | 223,410,842 B | the payload, uncompressed, never served |
+| `Sonora-0.6.0-win-x64.spk.zst` | 49,320,420 B | the same bytes, for downloading |
+| `0.5.0-0.6.0-win-x64.patch` | **86,053 B** | from the previous version |
+
+**0.0385% of the package it rebuilds.** The reason it is possible at all is a measurement that
+changed the design: *solid* compression destroys a delta — the same payload as one compressed
+stream turns a 128 KiB patch into 5.04 MiB — so the update artefact is an uncompressed archive
+and compression is transport only. The full story is in
+[**docs/WRITEUP.md**](docs/WRITEUP.md), which is the one piece of this repository worth reading
+if you only read one.
+
+Nothing moves until the application exits, every step is written to a journal before it is
+performed, and a version that never reports starting is rolled back by the start after it.
+
+---
+
+## What is proved, and how
+
+The most useful thing a portfolio repository can say is which of its claims are tested and
+which are merely compiled. This is that list.
+
+| claim | what backs it |
+| --- | --- |
+| Gapless playback, wav/flac/mp3 | `--play a.flac b.flac` performs the join inside the device callback and reports how many it made and how many underruns; the ring buffer, the engine and the state machine are unit tested on all three platforms |
+| The audio callback allocates nothing, locks nothing, logs nothing | [ADR 0006](docs/adr/0006-the-audio-callback-is-real-time.md) and the design of the SPSC ring; **not** verified by a tool — there is no automated check that the callback stays real-time |
+| The bridge cannot drift from its schema | the handler interface is generated and pure virtual, so a schema change that nobody implements does not compile |
+| Media keys work with the window minimised | by hand, on Windows, repeatedly |
+| Delta update, signature, atomic swap, rollback | three end-to-end tests — real trees, a real Ed25519 signature, a real zstd patch, real renames — running on Windows, macOS **and** Linux |
+| The journal recovers from any interruption | exhaustive enumeration: 7 stages × 8 directory states × 3 flag states × 2 attempt counts × 2 outcomes, carried across sessions. It found a case that would have deleted the only installation |
+| Crash → minidump → symbolised stack | done by hand on Windows, once, end to end: a 1,569,248-byte dump with five crash keys and a stack that names `CrashThisProcessNow` at `runtime.cpp:71` |
+| A performance regression fails the build | the gate's arithmetic has its own tests; the gate has been made to fail on purpose with the previous scanner (`+22.2% REGRESSED`, exit 1) |
+| The MSI installs and uninstalls cleanly | by hand, on one Windows machine |
+
+And what is **not**:
+
+- **The macOS backend has never run on a Mac.** It is written, it compiles in CI, and that is
+  the whole of the claim. The Linux backend is a stub that fails with a clear message.
+- **The CEF sandbox is off** ([ADR 0003](docs/adr/0003-serving-the-ui-over-a-custom-scheme.md)),
+  which is the largest single debt in the project.
+- **The signing key in this tree must be replaced before a real release**, and until it is, the
+  release job refuses to publish a manifest rather than publishing one nobody can trust.
+  [docs/release-key.md](docs/release-key.md) is the four steps, including the one people skip.
+- **Ten minutes of uninterrupted playback has never been measured**, so the underrun count is a
+  number the tooling reports rather than a number anybody has watched.
+- **The MSI has not been installed on a clean machine**, so the Visual C++ runtime being left
+  to the operating system is an assumption, not a result.
+
+---
+
+## Build it in three commands
+
+Windows, Visual Studio 2022 or newer, [vcpkg](https://github.com/microsoft/vcpkg) and Node 22:
+
+```powershell
+$env:VCPKG_ROOT = "C:\path\to\vcpkg"
+cmake --preset win-debug -DSONORA_BUILD_UI=ON
+cmake --build --preset win-debug
+```
+
+The first configure downloads CEF (about a gigabyte, pinned and hash-checked) and builds the
+vcpkg dependencies; after that it is an ordinary build. Then:
+
+```powershell
+.\build\win-debug\bin\Debug\Sonora.exe --library "$env:USERPROFILE\Music"
+```
+
+`ctest --preset win-debug` runs 318 test cases. macOS and Linux build the portable half with
+`mac-release`, `linux-debug` and `linux-release` — everything except the shell, which is the
+only target that needs CEF.
 
 ---
 

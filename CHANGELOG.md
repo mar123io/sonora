@@ -1,0 +1,104 @@
+# Changelog
+
+Notable changes, newest first. Versions follow [semantic versioning](https://semver.org/), and
+the number comes from the git tag — see `cmake/Version.cmake`, which is also what decides that
+a tag like `v0.9-delivery` is a milestone and not a release.
+
+---
+
+## 1.0.0
+
+The first release meant for somebody else's computer. Thirteen weeks, and the point of it was
+never the music player: it was to build the parts of a desktop application that are usually
+left for later — the installer, the updater, the crash path, the performance gate — and to
+find out what they actually cost.
+
+### The application
+
+- **A native window hosting a web interface in CEF**, with the native side owning the message
+  loop and CEF running on an external pump. One loop in the process, not two.
+- **Its own audio engine**: decoder → lock-free SPSC ring buffer → device callback, with the
+  gapless join between two tracks performed *inside* the callback. wav, flac and mp3.
+- **A library**: SQLite with FTS5, an incremental scan that reads nothing it has already seen,
+  cover art, and a searchable, virtualised track list.
+- **Windows integration**: the system media panel and the media keys with the window
+  minimised, a tray icon, taskbar thumbnail buttons, a jump list of recent albums, one
+  instance per session, `sonora://` links from the browser, and a window that reopens where it
+  was left — including across a display that has been unplugged.
+- **A typed bridge** between the two halves, generated from one schema, with capability
+  negotiation and a degraded interface when something is unavailable. No file path ever
+  crosses it.
+
+### Shipping it
+
+- **A per-user MSI** built by CI on a clean machine, with a Start Menu shortcut carrying the
+  AppUserModelID that the jump list needs, and a clean uninstall.
+- **Delta updates**: 86,053 bytes to move an installation from 0.5.0 to 0.6.0, against a
+  49 MiB full package — 0.0385%. The update artefact is an uncompressed archive because solid
+  compression destroys a delta by a factor of forty, which was measured before it was decided.
+- **A signed manifest and no update server.** Ed25519 over the manifest's bytes, verified
+  before any parser sees them; one signature covers every artefact because the manifest
+  carries their hashes.
+- **An atomic-swap installer with rollback.** Replacing a directory is three operations and not
+  one, so every step is written to a journal before it is performed, and a version that never
+  reports having started is rolled back by the start after it. There is no twenty-second timer
+  anywhere in the project.
+- **Staged rollout**: a percentage in the signed manifest and a stable bucket per installation,
+  with the version inside the hash so that widening a rollout adds installations rather than
+  reshuffling them.
+- **Crash reporting**: CEF's own Crashpad, configured by a file beside the executable, five
+  crash keys, and **the PDBs published with every release** — the one artefact that cannot be
+  regenerated on the day it is needed.
+- **A performance gate** that refuses a 10% regression, and refuses to gate a metric whose
+  median is not known to better than half that. Baselines keep every sample so that measuring
+  for longer makes the gate tighter.
+- **Everything pinned**: CEF, the vcpkg registry commit, clang-format, WiX, Node. The same tag
+  produces the same binaries on a runner and on a laptop.
+
+### Known limitations
+
+These are in the README in more detail, and they are here because a release that hides them is
+a release that will disappoint somebody in week two.
+
+- **macOS and Linux are compiled, not run.** The portable half — audio, bridge, library, state,
+  update, benchmarks — is unit-tested on all three platforms in CI. The macOS window and media
+  backends have never run on a Mac; the Linux backend is a stub that says so.
+- **macOS and Linux have no updater.** The platform layer refuses the five calls it cannot
+  make rather than pretending.
+- **The CEF sandbox is off.** It is the largest debt in the project and it is recorded in
+  ADR 0003 rather than buried.
+- **Code signing is demonstrated with a self-signed certificate**, which is trusted by exactly
+  one machine. SmartScreen will warn, and a real release needs a certificate from a CA.
+- **If the new version's own updater is broken, nothing rolls back.** The decision is made by
+  the binary whose ability to start is in question. Reinstalling the MSI is the documented
+  recovery.
+- **An update needs about 530 MiB free** for a 213 MiB installation: two payloads and a patch.
+  The updater checks first and says so.
+
+---
+
+## 0.6.0
+
+Delta updates, the signed manifest, the journal and the rollback. `sonora-updater.exe` arrives
+as a separate executable, because the process that replaces an installation cannot be the
+process running from it.
+
+## 0.5.0
+
+The MSI, the release pipeline, and one version number reaching the binary, the installer and
+`--version` from the git tag.
+
+## 0.4.0
+
+Shell integration: tray, jump list, taskbar buttons, single instance, `sonora://` links, and a
+window that remembers where it was.
+
+## 0.3.0
+
+The audio engine and the library: playback, the queue, gapless, the SQLite index and the
+interface that uses them.
+
+## 0.2.0
+
+CEF inside the native window, the UI served over `sonora://`, and the generated bridge between
+them.
