@@ -88,8 +88,12 @@ Write-Host 'The private half is in ' -NoNewline
 Write-Host $Out -ForegroundColor Yellow -NoNewline
 Write-Host '. Put it in the repository secret and delete it:'
 Write-Host ''
-Write-Host "    gh secret set SONORA_RELEASE_KEY < $Out"
-Write-Host "    Remove-Item $Out"
+# Get-Content and a pipe, not `<`. PowerShell reserves `<` and refuses the line outright
+# ("Operatore '<' riservato per utilizzi futuri"), so the first version of this script
+# printed, from PowerShell, a command PowerShell cannot parse. A tool that hands you a
+# command should hand you one that runs in the shell it is running in.
+Write-Host "    Get-Content -Raw '$Out' | gh secret set SONORA_RELEASE_KEY"
+Write-Host "    Remove-Item '$Out'"
 Write-Host ''
 Write-Host 'A key whose private half has been anywhere but a secret store is not a signing' -ForegroundColor Yellow
 Write-Host 'key. The release job refuses to publish a manifest while the binary still' -ForegroundColor Yellow

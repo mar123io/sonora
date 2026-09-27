@@ -43,9 +43,13 @@ message saying so.
 The script prints both commands with the real path filled in:
 
 ```powershell
-gh secret set SONORA_RELEASE_KEY < <the PEM it wrote>
-Remove-Item <the PEM it wrote>
+Get-Content -Raw "$env:TEMP\sonora-release-key.pem" | gh secret set SONORA_RELEASE_KEY
+Remove-Item "$env:TEMP\sonora-release-key.pem"
 ```
+
+`Get-Content` and a pipe rather than `<`: PowerShell reserves `<` and refuses the line
+before running anything, which is the sort of detail that only shows up when somebody
+actually types it.
 
 The second line is not optional and is not tidiness: a private key that is still on a laptop
 is a private key that will be in a backup.
