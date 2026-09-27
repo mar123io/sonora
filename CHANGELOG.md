@@ -49,9 +49,14 @@ find out what they actually cost.
 - **Crash reporting**: CEF's own Crashpad, configured by a file beside the executable, five
   crash keys, and **the PDBs published with every release** — the one artefact that cannot be
   regenerated on the day it is needed.
-- **A performance gate** that refuses a 10% regression, and refuses to gate a metric whose
-  median is not known to better than half that. Baselines keep every sample so that measuring
-  for longer makes the gate tighter.
+- **A performance gate** that refuses a 10% regression on a pull request, and refuses to gate
+  a metric whose median is not known to better than half that. Baselines keep every sample, so
+  measuring for longer makes the gate tighter — and the week that shipped this found the limit
+  of that idea: `ubuntu-latest` is a fleet, one commit measured 133 ms of cold scan on one host
+  and 276 ms on another while the metric that counts bytes came back identical to the byte, and
+  variance between hosts reached twice the regression the gate exists to catch. So a duration
+  is gated where a person is reading it and reported everywhere else, a count is gated
+  everywhere, and a benchmark that goes missing fails in every mode. ADR 0015.
 - **Everything pinned**: CEF, the vcpkg registry commit, clang-format, WiX, Node. The same tag
   produces the same binaries on a runner and on a laptop.
 
@@ -74,6 +79,11 @@ a release that will disappoint somebody in week two.
   recovery.
 - **An update needs about 530 MiB free** for a 213 MiB installation: two payloads and a patch.
   The updater checks first and says so.
+- **The durations in the performance table cannot be compared between machines**, which means
+  three of the four metrics are measured and published rather than enforced. The open proposal
+  is a calibrator per resource so that the gate can read a ratio instead of a millisecond; the
+  prediction that it will not be tight enough for a 10% gate is written down in ADR 0015 before
+  the experiment, along with the two cheaper fixes that the numbers already ruled out.
 
 ---
 

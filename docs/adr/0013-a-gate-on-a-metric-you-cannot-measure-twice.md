@@ -1,7 +1,17 @@
 # ADR 0013 — A gate on a metric you cannot measure twice is a coin toss
 
-- **Status:** accepted
+- **Status:** accepted, and amended one week later by
+  [ADR 0015](0015-the-runner-is-not-one-machine.md)
 - **Date:** 2026-12-07
+
+> The consequence below headed *"the baseline belongs to a machine, and that machine is the
+> runner"* is the part that did not survive. `ubuntu-latest` is a fleet: the same commit
+> measured 133 ms of cold scan on one of its hosts and 276 ms on another, while the one metric
+> that counts bytes came back identical to the byte. Everything else in this document stands,
+> and the arithmetic in it is still what decides a verdict — but it measures how well a median
+> is known *on the machine standing under it*, which is a different question from whether two
+> machines can be compared at all. [ADR 0015](0015-the-runner-is-not-one-machine.md) is that
+> question.
 
 ## Context
 

@@ -1,15 +1,26 @@
 # Benchmarks, and the gate that reads them
 
-`sonora_bench` measures four things and compares them against a recorded baseline. A
-metric that got more than 10% worse fails the build; a metric whose measurement cannot
-support a gate that tight is reported and gated on nothing.
+`sonora_bench` measures four things and compares them against a recorded baseline. **On a
+pull request**, a metric that got more than 10% worse fails the build. Everywhere else — a
+push to `main`, a tag — a duration that got worse is printed and not judged, and what still
+fails is a count that moved or a benchmark that went missing.
 
-That second rule is the whole design, and it is
+Two rules underneath that, and each of them cost a measurement to learn.
+
+**A metric whose measurement cannot support a gate that tight is gated on nothing.** That is
 [ADR 0013](../docs/adr/0013-a-gate-on-a-metric-you-cannot-measure-twice.md). The short
 version: the same code, unchanged, measured 80.2 ms to 93.7 ms across six runs of the
 suite, while each individual run reported a spread of about 2%. A gate built on one run's
 opinion of its own noise would have failed builds at random, and a gate that fails at
 random is turned off within a fortnight.
+
+**And a duration is not comparable between two machines, however carefully each one measured
+it.** That is [ADR 0015](../docs/adr/0015-the-runner-is-not-one-machine.md), and it cost a
+release to find out. Pushing the `v1.0.0` tag measured the cold scan at 275.660 ms against a
+baseline of 133.467 — +106.5%, with a spread of 1.23% — on six commits that touch nothing the
+benchmark links, while `update-delta-size` came back identical to the byte. `ubuntu-latest` is
+a fleet and not a machine, variance between its hosts reached twice the regression the gate
+exists to catch, and there is no threshold that separates those two.
 
 ## What is measured
 
@@ -44,6 +55,7 @@ Useful flags:
 
 ```
 --repetitions N     how many times each metric is measured (at least 3; 9 in CI)
+--warmup N          iterations run and thrown away first (default 3; see below)
 --files N           how large the synthetic library is (default 4,000)
 --workdir DIR       where the test data goes
 --baseline FILE     compare against this file, and fail on a regression
@@ -53,7 +65,29 @@ Useful flags:
 --noise-budget F    how much of the threshold the noise may be (default 0.5)
 --update-baseline   replace the baseline with this run
 --append            add this run's samples to the baseline instead of replacing it
+--report-only       print the comparison; exit 0 anyway if only a duration got worse
 ```
+
+### `--warmup`, and why it is three
+
+The first iterations of a benchmark are not measuring the benchmark. All three runs of the
+recorded baseline had the same shape:
+
+```
+0.878  0.639  0.277  0.247  0.208  0.201  0.204  0.211  0.199
+0.850  1.086  0.267  0.212  0.195  0.211  0.195  0.194  0.194
+0.824  1.018  0.243  0.198  0.194  0.201  0.194  0.193  0.196
+```
+
+Twenty lines that allocate, touch and free a buffer of the same 8,523,776 bytes in a loop
+reproduce that curve with no Sonora in them at all: glibc serves the first large allocation
+from `mmap`, returns it with `munmap`, and only after a couple of rounds raises its own
+threshold and starts reusing pages the kernel has already faulted in. Six of the twenty-seven
+samples were the kernel, at up to 1.086 ms against a real cost of 0.195.
+
+Discarding three takes that metric's spread from 6.7% to 2.3% and its uncertainty from 2.41%
+to 0.99% — which, and this is the joke, makes the gate **tighter** and so more likely to fire
+on a host it cannot see. The junk samples had been an accidental safety margin.
 
 ## The baseline
 
@@ -63,8 +97,12 @@ those 4,000 files in a few hundred milliseconds, a developer's desktop in rather
 comparing one against the other produces a 40% "regression" on the first commit of the
 week.
 
-So there is one baseline, it belongs to `ubuntu-latest`, and it is committed to this
-repository so that a pull request is measured against the same numbers whoever opens it.
+So there is one baseline, it is committed to this repository so that a pull request is
+measured against the same numbers whoever opens it, and it belongs to **one host out of
+`ubuntu-latest`** rather than to `ubuntu-latest` — which is the sentence this file used to get
+wrong, and ADR 0015 is what corrected it. Two hosts from that fleet measured the same commit
+at 133.5 ms and 275.7 ms. Re-recording the baseline does not fix that; it moves which host is
+the lucky one.
 
 ### Recording it
 
@@ -110,8 +148,15 @@ git commit -am "deliberately slow, to see the gate fail"
 gh pr create --fill
 ```
 
-The `linux-x64 (release, benchmarks)` job goes red with `library-scan-cold ... REGRESSED`,
-and the pull request cannot be merged. Then throw the branch away.
+It has to be a pull request — that is the only event where a slow duration still fails. The
+`linux-x64 (release, benchmarks)` job goes red with `library-scan-cold ... REGRESSED`, and the
+pull request cannot be merged. Then throw the branch away.
+
+Read the size of the number as well as its colour. When this was done, the patch was predicted
+to cost about +55% and the job reported +63.2%; the same benchmark on the same unpatched code,
+a few days later on a different host, reported +106.5%. Roughly half of that +63.2% was the
+patch and roughly half was the machine, which is exactly why the durations no longer fail
+anything outside a pull request.
 
 It is worth doing once, on purpose, because a gate nobody has seen fail is a gate nobody
 knows is wired up — and this one spent its first afternoon reporting `too noisy` for

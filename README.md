@@ -60,17 +60,24 @@ cmake --build --preset linux-release
 ./build/linux-release/bin/sonora_bench --repetitions 9
 ```
 
-A CI job fails the build when one of these gets more than 10% worse. All four are known to
-better than a fifth of that, so all four are actually gated — which is not a given: **a metric
-whose median is not known to better than half the threshold is reported and gated on nothing**,
-because the same code measured 80.2 to 93.7 ms across six runs while each run claimed 2%
-noise. That rule, and the afternoon that produced it, are
-[ADR 0013](docs/adr/0013-a-gate-on-a-metric-you-cannot-measure-twice.md).
+On a pull request, a CI job fails the build when one of these gets more than 10% worse. On a
+push or a tag it prints the same table and fails only on the last row — and that asymmetry is
+the most useful thing in this section.
 
-The numbers above belong to the machine that recorded them and to no other. A laptop reports
-different ones, which is why the baseline is recorded on the runner and committed — see
-[bench/README.md](bench/README.md) — and why "faster than last week" is a claim that needs to
-name a machine before it means anything.
+**The numbers above belong to one machine, and `ubuntu-latest` is not one machine.** Pushing
+the `v1.0.0` tag measured the cold scan at 275.7 ms against the 133.5 in the table: +106.5%,
+with a spread of 1.2%, over six commits that touch nothing the benchmark links — while
+`update-delta-size`, the only row that counts instead of timing, came back identical to the
+byte. Variance between hosts reached twice the size of the regression the gate was built to
+catch, and no threshold separates those two. So a duration is reported, a count is gated, and
+a benchmark that goes missing fails everywhere:
+[ADR 0015](docs/adr/0015-the-runner-is-not-one-machine.md).
+
+Underneath that, the week-12 rule still stands: **a metric whose median is not known to better
+than half the threshold is reported and gated on nothing**, because the same code measured 80.2
+to 93.7 ms across six runs while each run claimed 2% noise —
+[ADR 0013](docs/adr/0013-a-gate-on-a-metric-you-cannot-measure-twice.md). Two documents, two
+measurements, and the second one is the first one's correction.
 
 ---
 
@@ -111,7 +118,7 @@ which are merely compiled. This is that list.
 | Delta update, signature, atomic swap, rollback | three end-to-end tests — real trees, a real Ed25519 signature, a real zstd patch, real renames — running on Windows, macOS **and** Linux |
 | The journal recovers from any interruption | exhaustive enumeration: 7 stages × 8 directory states × 3 flag states × 2 attempt counts × 2 outcomes, carried across sessions. It found a case that would have deleted the only installation |
 | Crash → minidump → symbolised stack | done by hand on Windows, once, end to end: a 1,569,248-byte dump with five crash keys and a stack that names `CrashThisProcessNow` at `runtime.cpp:71` |
-| A performance regression fails the build | the gate's arithmetic has its own tests; the gate has been made to fail on purpose with the previous scanner (`+22.2% REGRESSED`, exit 1) |
+| A performance regression fails the build | **on a pull request, and only for a metric that is a count**. The gate's arithmetic has its own tests and it has been made to fail on purpose (`+63.2% REGRESSED`, exit 1) — but the same unpatched code later measured `+106.5%` on a different host, so a slow duration outside a pull request is reported and judged by a person ([ADR 0015](docs/adr/0015-the-runner-is-not-one-machine.md)) |
 | The MSI installs and uninstalls cleanly | by hand, on one Windows machine |
 
 And what is **not**:
@@ -755,10 +762,10 @@ update-delta-size     the patch between two builds that differ by one file
 update-patch-apply    rebuilding the new package from the old one plus the patch
 ```
 
-`sonora_bench` measures those four, and a CI job fails the build when one gets more than 10%
-worse. The interesting rule is the second one: **a metric whose median is not known to better
-than half the threshold is not gated at all.** It is reported as too noisy and it blocks
-nothing.
+`sonora_bench` measures those four. On a pull request, a CI job fails the build when one gets
+more than 10% worse; on a push or a tag, only `update-delta-size` can fail it. The interesting
+rule is the second one: **a metric whose median is not known to better than half the threshold
+is not gated at all.** It is reported as too noisy and it blocks nothing.
 
 That rule is there because of a measurement. The same code, unchanged, produced medians from
 80.2 ms to 93.7 ms across six runs of the suite, while every individual run reported a spread
@@ -768,6 +775,22 @@ sample from every recording run and the gate consults the uncertainty of the med
 `≈ 1.858 × MAD / median / √n`. [ADR 0013](docs/adr/0013-a-gate-on-a-metric-you-cannot-measure-twice.md)
 is the reasoning; [`bench/README.md`](bench/README.md) is how to run it and how to record a
 baseline.
+
+And then the `v1.0.0` tag found the hole in it. That rule measures how well a median is known
+**on the machine standing under it**, and no sample count says anything about the next machine:
+the tag measured the cold scan at 275.660 ms against a baseline of 133.467, with a spread of
+1.23% — reliably, repeatably slow rather than noisy — while the one metric that counts bytes
+instead of milliseconds came back identical to the byte. The clincher is smaller and worse: the
+pull request that made the scanner *deliberately* worse measured 217.877 ms, so the sabotaged
+code was twenty per cent faster than the clean code, because it landed on a better host.
+
+Variance between hosts reached +106.5%; the regression the gate exists to catch was +55%. No
+threshold separates those, and more samples do not help — they only make us more certain that
+this host is slow. So durations are reported and gated only where a person is about to read
+them, counts are gated everywhere, and a benchmark that goes missing fails in every mode
+because that is the one failure somebody could use to make the gate green.
+[ADR 0015](docs/adr/0015-the-runner-is-not-one-machine.md) has the numbers, the three fixes
+that were rejected and why, and the one open experiment.
 
 #### The optimisation, and the number that was wrong
 
@@ -860,6 +883,10 @@ Three decisions shape the rest:
   performance gate is a statement about a measurement before it is a statement
   about code, so the rule that decides a regression lives in a portable library
   with tests of its own and a metric too noisy to gate is not gated.
+- [ADR 0015](docs/adr/0015-the-runner-is-not-one-machine.md) — and the machine is
+  part of the measurement: `ubuntu-latest` is a fleet, one commit measured 133 ms
+  on one host and 276 ms on another, so a duration is reported where nobody is
+  reading it and only a count is gated everywhere.
 - [ADR 0014](docs/adr/0014-the-crash-handler-is-the-one-already-in-the-process.md) —
   the crash handler is CEF's, configured by a file rather than by code, and the
   part that cannot be deferred is publishing the PDBs, because a dump without the
