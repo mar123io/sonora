@@ -313,6 +313,124 @@ jobs:
           path: build/packages/*.msi
           if-no-files-found: error
 
+      # -----------------------------------------------------------------------
+      # The update artefacts
+      # -----------------------------------------------------------------------
+      # Built from `build/win-release/stage` -- the same staging directory the MSI
+      # was built from, in the same job. That is not a convenience: it is the only
+      # arrangement in which the installer and the update package cannot disagree
+      # about what version 0.6.0 contains.
+      #
+      # The version comes out of the MSI's own file name rather than from the tag,
+      # so if those two ever diverge this step is where it is noticed.
+      - name: Build the update package
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem build/packages/*.msi | Select-Object -First 1
+          if ($msi.Name -notmatch 'Sonora-(\d+\.\d+\.\d+)-x64\.msi') {
+            throw "cannot read a version out of $($msi.Name)"
+          }
+          $version = $Matches[1]
+          "SONORA_RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          New-Item -ItemType Directory -Force -Path build/updates | Out-Null
+          # Visual Studio is a multi-config generator and Ninja is not, so the
+          # executable is under bin/Release with one and bin with the other. Finding it
+          # beats encoding which generator the runner happened to pick.
+          $tool = (Get-ChildItem -Path build/win-release -Recurse -Filter sonora_release.exe |
+                   Select-Object -First 1).FullName
+          if (-not $tool) { throw 'sonora_release.exe was not built' }
+          $spk = "build/updates/Sonora-$version-win-x64.spk"
+          & $tool pack build/win-release/stage $spk
+          if ($LASTEXITCODE -ne 0) { throw 'sonora_release pack failed' }
+          & $tool compress $spk "$spk.zst"
+          if ($LASTEXITCODE -ne 0) { throw 'sonora_release compress failed' }
+
+      # A patch for each of the last three releases that published one, and none for
+      # the ones that did not -- which includes every release before week 11. A client
+      # that finds no delta from its own version takes the full package, so a missing
+      # patch costs bytes and nothing else, and this step never fails the build for it.
+      - name: Generate the deltas
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = $env:SONORA_RELEASE_VERSION
+          $urlBase = "https://github.com/${{ github.repository }}/releases/download/v$version"
+          # Visual Studio is a multi-config generator and Ninja is not, so the
+          # executable is under bin/Release with one and bin with the other. Finding it
+          # beats encoding which generator the runner happened to pick.
+          $tool = (Get-ChildItem -Path build/win-release -Recurse -Filter sonora_release.exe |
+                   Select-Object -First 1).FullName
+          if (-not $tool) { throw 'sonora_release.exe was not built' }
+          $spk = "build/updates/Sonora-$version-win-x64.spk"
+          $arguments = @(
+            '--out', 'build/updates/manifest.json',
+            '--channel', 'stable',
+            '--release', "${version}:win-x64:${spk}:${spk}.zst:$urlBase"
+          )
+
+          $tags = @()
+          try {
+            $tags = gh release list --limit 15 --json tagName,isDraft |
+              ConvertFrom-Json |
+              Where-Object { -not $_.isDraft -and $_.tagName -match '^v\d+\.\d+\.\d+$' } |
+              ForEach-Object { $_.tagName } |
+              Where-Object { $_ -ne "v$version" } |
+              Select-Object -First 3
+          } catch {
+            Write-Host "no release list available: $($_.Exception.Message)"
+          }
+
+          foreach ($tag in $tags) {
+            $old = $tag.Substring(1)
+            $dir = "build/updates/prev/$tag"
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            gh release download $tag --pattern '*-win-x64.spk.zst' --dir $dir 2>$null
+            $package = Get-ChildItem "$dir/*.spk.zst" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $package) {
+              Write-Host "$tag published no update package; clients on it will take the full one"
+              continue
+            }
+            $oldSpk = "$dir/$old.spk"
+            & $tool expand $package.FullName $oldSpk
+            if ($LASTEXITCODE -ne 0) { Write-Host "cannot expand $tag"; continue }
+            $patch = "build/updates/$old-$version-win-x64.patch"
+            & $tool delta $oldSpk $spk $patch
+            if ($LASTEXITCODE -ne 0) { Write-Host "cannot patch $old -> $version"; continue }
+            # The old release is listed too, so that a client running it can check its
+            # own installation against the archive hash it was published with before it
+            # patches from it. Without that entry the delta path still works, but the
+            # first thing that notices a modified installation is a wasted download.
+            $oldZst = $package.FullName
+            $oldUrlBase = "https://github.com/${{ github.repository }}/releases/download/$tag"
+            $arguments += @('--release', "${old}:win-x64:${oldSpk}:${oldZst}:$oldUrlBase")
+            $arguments += @('--delta', "${version}:${old}:$patch")
+            Remove-Item $oldSpk -Force
+          }
+
+          $arguments | Set-Content build/updates/manifest-args.txt -Encoding ascii
+          Write-Host ($arguments -join ' ')
+
+      - name: Write the manifest
+        shell: pwsh
+        run: |
+          $arguments = Get-Content build/updates/manifest-args.txt
+          python tools/gen_manifest.py @arguments
+          Get-Content build/updates/manifest.json
+
+      # The uncompressed .spk is 213 MiB and nobody downloads it: it exists during this
+      # job so that patches can be computed against it, and its hash in the manifest is
+      # what a client checks its own reconstruction against.
+      - name: Upload the update artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonora-updates
+          path: |
+            build/updates/*.spk.zst
+            build/updates/*.patch
+            build/updates/manifest.json
+          if-no-files-found: error
+
   release:
     name: GitHub Release
     needs: [package]
@@ -323,14 +441,74 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: sonora-msi
           path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: sonora-updates
+          path: artifacts
+
+      # The signature over the manifest, and the whole of what an installation trusts.
+      #
+      # It is made here with openssl rather than with a tool of ours, and that is worth a
+      # sentence: the release is signed by OpenSSL on a runner and verified by libsodium
+      # on somebody's laptop, and the only way to know those two agree about Ed25519 is to
+      # have one check a signature the other made. tests/test_update_manifest.cpp does
+      # exactly that, against a signature this same command produced.
+      #
+      # Without a key there is no signature, and without a signature the manifest is not
+      # attached at all. An unsigned manifest is worse than no manifest: it would be a
+      # file at the url every installation polls, saying whatever anybody who can write to
+      # it wants, and the client would refuse it -- so all it could ever do is make a
+      # working updater look broken.
+      - name: Sign the manifest
+        id: sign
+        env:
+          SONORA_RELEASE_KEY: ${{ secrets.SONORA_RELEASE_KEY }}
+        run: |
+          set -eu
+          if [ -z "${SONORA_RELEASE_KEY:-}" ]; then
+            echo "::warning::No SONORA_RELEASE_KEY, so no signed manifest is published and" \
+                 "installed copies will not see this release. See ADR 0009 and" \
+                 "tools/update_keygen.ps1."
+            rm -f artifacts/manifest.json
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The development key's private half has been outside a secret store, so a build
+          # that still trusts it trusts everybody who has ever seen this repository. This
+          # is the check that stops a note in a comment from being the only thing standing
+          # between that and a published release.
+          if grep -q '0x90, 0x77, 0x2d, 0x19' src/update/src/signature.cpp; then
+            echo "::error::src/update/src/signature.cpp still trusts the development key."
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$SONORA_RELEASE_KEY" > release.pem
+          openssl pkeyutl -sign -inkey release.pem -rawin \
+            -in artifacts/manifest.json -out manifest.sig.bin
+          od -An -tx1 manifest.sig.bin | tr -d ' \n' > artifacts/manifest.json.sig
+          echo >> artifacts/manifest.json.sig
+          # And verify it before publishing it, because a signature nobody checked is a
+          # string of hex.
+          openssl pkeyutl -verify -pubin \
+            -inkey <(openssl pkey -in release.pem -pubout) -rawin \
+            -in artifacts/manifest.json -sigfile manifest.sig.bin
+          rm -f release.pem manifest.sig.bin
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*.msi
+          files: |
+            artifacts/*.msi
+            artifacts/*.spk.zst
+            artifacts/*.patch
+            artifacts/manifest.json
+            artifacts/manifest.json.sig
           # A draft, not a published release. The last look before something
           # carries a version number in public is a person's, and there is
           # nothing in this pipeline that can check what a release note says.

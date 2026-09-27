@@ -82,6 +82,7 @@ sonora_define_ui_target()
 enable_testing()
 
 add_subdirectory(src)
+add_subdirectory(tools)
 
 if(SONORA_BUILD_TESTS)
   add_subdirectory(tests)

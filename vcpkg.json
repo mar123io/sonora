@@ -6,11 +6,14 @@
   "homepage": "https://github.com/mar123io/sonora",
   "$comment-baseline": "Week 10. Until now the package versions came from whatever vcpkg clone ran the build -- the developer's, or whichever one the GitHub runner image happened to ship that month -- so two builds of the same commit could link two different sqlite3. This commit is a snapshot of the vcpkg registry, and it is what turns 'the same tag' into 'the same binaries'. Update it deliberately, never incidentally: bumping it is a dependency upgrade, and it belongs in a commit that says so.",
   "builtin-baseline": "319504a5326aa870edde46438c5455fa76305a56",
-  "$comment-deps": "Keep this list minimal. drogon lands in week 11.",
+  "$comment-deps": "Keep this list minimal. Week 11 was going to add drogon for an update service and added libsodium and zstd instead: ADR 0009 decided the update server is a signed static file, so there is no service to write, and the two libraries that arrived are the ones the client needs to check a signature and apply a patch.",
+  "$comment-libsodium": "The only cryptography in this project, and there is no second one: ADR 0009 says this repository implements no primitive of its own. Ed25519 for the release signature, BLAKE2b-256 for every hash, sodium_memcmp for every comparison of one.",
+  "$comment-zstd": "--patch-from, as a library rather than a command line, so that the delta generator in CI and the updater on a user's machine are the same code with the same parameters -- including nbWorkers = 0, which is worth a factor of two on the size of a patch (ADR 0010).",
   "$comment-miniaudio": "One header, two unrelated halves: the decoders (wav/flac/mp3, pure computation, used by src/audio) and the device backends (WASAPI/CoreAudio/ALSA, used by src/platform). It is the reason the platform layer needs no per-OS audio file.",
   "$comment-sqlite3": "The fts5 feature has to be asked for: vcpkg's default sqlite3 is built without it, and a library index with no search is not one. src/library/ says so in the error message if this is ever dropped.",
   "dependencies": [
     "catch2",
+    "libsodium",
     "miniaudio",
     "nlohmann-json",
     {
@@ -19,6 +22,7 @@
         "fts5"
       ]
     },
-    "taglib"
+    "taglib",
+    "zstd"
   ]
 }
