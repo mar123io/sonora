@@ -11,6 +11,10 @@ add_subdirectory(state)
 # The updater's decisions: manifest, signature, archive, patch, journal. Portable
 # on purpose -- see src/update/CMakeLists.txt and ADRs 0009 to 0011.
 add_subdirectory(update)
+# The benchmark harness's arithmetic. It measures nothing and depends on nothing
+# in this project, which is what makes the rule that decides a regression
+# testable -- see ADR 0013.
+add_subdirectory(bench)
 add_subdirectory(platform)
 
 # The updater is a separate executable on purpose -- see src/updater/CMakeLists.txt.

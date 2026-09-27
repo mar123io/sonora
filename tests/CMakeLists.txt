@@ -3,6 +3,7 @@ find_package(Catch2 3 REQUIRED)
 add_executable(sonora_tests
   test_playback_state.cpp
   test_asset_store.cpp
+  test_bench_measure.cpp
   test_bridge.cpp
   test_capabilities.cpp
   test_deep_link.cpp
@@ -30,6 +31,7 @@ target_link_libraries(sonora_tests PRIVATE
   sonora::core
   sonora::assets
   sonora::audio
+  sonora::bench
   sonora::bridge
   sonora::library
   sonora::state
