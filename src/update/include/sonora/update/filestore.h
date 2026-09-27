@@ -173,7 +173,8 @@ struct LoadedJournal {
 
 // The launch flag: written by the application when it has shown its window with the
 // UI loaded, read by the updater to decide whether the version that wrote it works.
-[[nodiscard]] bool WriteLaunchFlag(const Layout& layout, const Version& version,
+[[nodiscard]] bool WriteLaunchFlag(const Layout& layout,
+                                   const Version& version,
                                    const FlushFn& flush);
 [[nodiscard]] std::optional<Version> ReadLaunchFlag(const Layout& layout);
 

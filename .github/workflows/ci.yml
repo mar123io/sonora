@@ -47,7 +47,7 @@ jobs:
       - name: Check formatting
         run: |
           clang-format --version
-          mapfile -t files < <(find src tests -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' \))
+          mapfile -t files < <(find src tests tools -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' \))
           printf 'checking %d files\n' "${#files[@]}"
           clang-format --dry-run --Werror "${files[@]}"
 
@@ -203,6 +203,30 @@ jobs:
       - name: Install Ninja (macOS)
         if: runner.os == 'macOS'
         run: brew install ninja
+
+      # Autotools, for one dependency's port, on the two platforms where that port
+      # uses them.
+      #
+      # libsodium's vcpkg port builds with `vcpkg_make_configure` on Unix and with the
+      # MSVC project on Windows, which is exactly why only these two jobs failed and
+      # the Windows one did not. The runner images carry autoconf, automake and
+      # libtool; none of them carries autoconf-archive, and the port asks for all four.
+      #
+      # These are the one thing in this pipeline that is not pinned, and week 10's
+      # argument applies to them with nowhere to apply it: they come from the runner's
+      # package manager and they change when that image changes. What limits the damage
+      # is that they decide whether libsodium builds, not which libsodium -- the
+      # version is the baseline's, and the binary cache means this path runs once per
+      # baseline rather than once per push.
+      - name: Autotools for libsodium's port (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf autoconf-archive automake libtool
+
+      - name: Autotools for libsodium's port (macOS)
+        if: runner.os == 'macOS'
+        run: brew install --quiet autoconf autoconf-archive automake libtool
 
 
       - name: Configure

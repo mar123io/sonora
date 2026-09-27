@@ -88,7 +88,11 @@ if ($version -match 'version (\d+)\.') {
 
 $root = Split-Path -Parent $PSScriptRoot
 $patterns = '*.cpp', '*.h', '*.mm'
-$files = Get-ChildItem -Path (Join-Path $root 'src'), (Join-Path $root 'tests') `
+# tools/ as well as src/ and tests/, since week 11: tools/release_tool.cpp is C++ that
+# ships, and a C++ file no formatter looks at is a C++ file that drifts. It was already
+# drifting when this line was written.
+$files = Get-ChildItem -Path (Join-Path $root 'src'), (Join-Path $root 'tests'), `
+        (Join-Path $root 'tools') `
     -Recurse -Include $patterns -File
 
 if (-not $files) {

@@ -1372,6 +1372,20 @@ bandierine invece di portarne 242 che mentono. **La prima versione del test si l
 saltare quando il bit non tornava indietro; quella di adesso asserisce su entrambi i tipi
 di filesystem, che è la differenza fra un test e una nota.**
 
+**6. Una dipendenza si costruisce in due modi diversi, e la piattaforma che le serve
+davvero è l'unica che non ha avuto problemi.** La matrice: Windows verde in 6m44s con i
+test, macOS e Linux rossi in venti secondi. La porta vcpkg di libsodium usa il progetto
+MSVC su Windows e gli autotools altrove, e le immagini dei runner hanno `autoconf`,
+`automake` e `libtool` ma non `autoconf-archive` — che la porta chiede insieme agli altri
+tre. Venti secondi erano il tempo di scaricare il tarball e arrivare a `autoreconf`.
+
+Aggiunti i quattro pacchetti ai due job Unix, ed è **l'unica cosa non fissata in tutta la
+pipeline**: vengono dal gestore di pacchetti del runner e cambiano quando cambia
+l'immagine. L'argomento della settimana 10 si applica e non ha dove applicarsi. Quello che
+limita il danno è che decidono *se* libsodium si costruisce, non *quale*: la versione è
+quella del baseline, e con la cache binaria questo percorso gira una volta per baseline e
+non a ogni push.
+
 ### Cosa ho imparato
 
 - **Misura il contenitore prima di scegliere l'algoritmo.** Avevo l'ipotesi giusta per la
@@ -1460,6 +1474,14 @@ di filesystem, che è la differenza fra un test e una nota.**
   il giornale torna a `idle` e l'applicazione parte.
 
 ### Da riprendere
+
+- **I quattro pacchetti autotools dei job Unix non sono fissati.** Servono alla porta
+  vcpkg di libsodium, non a Sonora, e non entrano nel binario — ma sono l'unico punto in
+  cui questa pipeline dipende da un'immagine di runner. La via d'uscita, il giorno che
+  dessero problemi, è una libreria crittografica che si costruisca con CMake su tutte e
+  tre le piattaforme; BLAKE2b-256 ed Ed25519 sono standard, quindi i vettori di prova e il
+  manifest firmato di `test_update_manifest.cpp` continuerebbero a verificare — che è
+  anche il modo di dimostrare che uno scambio così non cambia niente.
 
 - **La chiave di firma è quella di sviluppo.** La sua metà privata è stata generata su una
   macchina che non è un archivio di segreti, ed esiste perché i test e la corsa

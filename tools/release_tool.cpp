@@ -123,8 +123,9 @@ int Delta(const fs::path& old_path, const fs::path& new_path, const fs::path& ou
   if (!WriteFileDurably(out, *patch, NoFlush(), store_error)) {
     return Fail(Describe(store_error));
   }
-  std::fprintf(stderr, "delta is %.4f%% of the package it rebuilds\n",
-               100.0 * static_cast<double>(patch->size()) / static_cast<double>(new_bytes->size()));
+  std::fprintf(
+      stderr, "delta is %.4f%% of the package it rebuilds\n",
+      100.0 * static_cast<double>(patch->size()) / static_cast<double>(new_bytes->size()));
   return Report(out);
 }
 

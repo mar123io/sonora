@@ -25,8 +25,12 @@ std::ofstream OpenForWriting(const fs::path& path) {
   return std::ofstream(path, std::ios::binary | std::ios::trunc);
 }
 
-char* AsChars(std::uint8_t* bytes) { return reinterpret_cast<char*>(bytes); }
-const char* AsChars(const std::uint8_t* bytes) { return reinterpret_cast<const char*>(bytes); }
+char* AsChars(std::uint8_t* bytes) {
+  return reinterpret_cast<char*>(bytes);
+}
+const char* AsChars(const std::uint8_t* bytes) {
+  return reinterpret_cast<const char*>(bytes);
+}
 
 // The relative path of `path` under `root`, with '/' separators, which is what an
 // archive member is named by. generic_string() is the portable spelling: on Windows

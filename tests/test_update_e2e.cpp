@@ -57,7 +57,8 @@ std::vector<std::uint8_t> Noise(std::size_t size, std::uint32_t seed) {
 void Write(const fs::path& path, std::span<const std::uint8_t> bytes) {
   fs::create_directories(path.parent_path());
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+  out.write(reinterpret_cast<const char*>(bytes.data()),
+            static_cast<std::streamsize>(bytes.size()));
   out.close();
   REQUIRE(out);
 }
@@ -77,7 +78,7 @@ std::vector<std::uint8_t> Read(const fs::path& path) {
 // not change between versions, a smaller one that does, and some files in
 // subdirectories.
 void BuildPayload(const fs::path& dir, bool second_version) {
-  Write(dir / "libcef.dll", Noise(400 * 1024, 100));            // unchanged across versions
+  Write(dir / "libcef.dll", Noise(400 * 1024, 100));  // unchanged across versions
   Write(dir / "Sonora.exe", Noise(64 * 1024, second_version ? 2 : 1));
   Write(dir / "locales" / "it.pak", Noise(4096, 7));
   Write(dir / "swiftshader" / "libvk_swiftshader.dll", Noise(32 * 1024, 8));
@@ -120,7 +121,9 @@ class MapFetcher final : public Fetcher {
   }
 };
 
-std::string Hex(std::span<const std::uint8_t> bytes) { return ToHex(bytes); }
+std::string Hex(std::span<const std::uint8_t> bytes) {
+  return ToHex(bytes);
+}
 
 // Everything a release produces, plus the key that signed it.
 struct World {
@@ -203,10 +206,10 @@ World MakeWorld(const fs::path& base,
       "    {\"version\": \"1.0.1\", \"platform\": \"win-x64\",\n" +
       "     \"archive\": {\"size\": " + std::to_string(spk_v2.size()) + ", \"hash\": \"" +
       Hex(*hash_v2) + "\"},\n" + "     \"package\": {\"url\": \"" + std::string(kPackageUrl) +
-      "\", \"size\": " + std::to_string(package->size()) + ", \"hash\": \"" + Hex(*hash_package) +
-      "\"},\n" + "     \"deltas\": [{\"from\": \"1.0.0\", \"url\": \"" + std::string(kDeltaUrl) +
-      "\", \"size\": " + std::to_string(delta->size()) + ", \"hash\": \"" + Hex(*hash_delta) +
-      "\"}]}\n  ]\n}";
+      "\", \"size\": " + std::to_string(package->size()) + ", \"hash\": \"" +
+      Hex(*hash_package) + "\"},\n" + "     \"deltas\": [{\"from\": \"1.0.0\", \"url\": \"" +
+      std::string(kDeltaUrl) + "\", \"size\": " + std::to_string(delta->size()) +
+      ", \"hash\": \"" + Hex(*hash_delta) + "\"}]}\n  ]\n}";
 
   // A signing key made here and now. The release key's private half lives in a
   // repository secret and is not in this tree (ADR 0009), and a test that needed it
@@ -418,7 +421,8 @@ TEST_CASE("end to end: a signature by a key this build does not trust is not a s
         StageResult::kSignatureInvalid);
 }
 
-TEST_CASE("end to end: an installation that is not what it was published as takes the package") {
+TEST_CASE(
+    "end to end: an installation that is not what it was published as takes the package") {
   TempDir temp;
   World world = MakeWorld(temp.path());
 
