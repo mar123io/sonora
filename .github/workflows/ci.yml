@@ -1,4 +1,3 @@
-# Copy to .github/workflows/ci.yml (the remote file bridge cannot write there).
 name: ci
 
 on:
@@ -7,6 +6,15 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      record_baseline:
+        description: >
+          Record the performance baseline instead of gating on it. Runs the suite three
+          times on the runner, appends the samples into one file and uploads it as an
+          artifact for a person to download and commit. See bench/README.md -- a baseline
+          is a property of a machine, so it cannot be produced anywhere but here.
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -91,6 +99,25 @@ jobs:
             os: ubuntu-latest
             preset: linux-debug
             needs_cef: false
+          # A fourth job, and the only one that measures anything.
+          #
+          # Release and not Debug, because a gate on an unoptimised build gates the
+          # unoptimised build: the scan spends its time in std::filesystem and in TagLib,
+          # both of which are a different program at -O0, and an optimisation that mattered
+          # there might not matter here. It is also the only job that compiles this project
+          # with optimisation on at all, which is how -Wmaybe-uninitialized and friends --
+          # warnings GCC only emits after it has inlined something -- get a chance to fire.
+          #
+          # Linux and not Windows for the boring reason: the shell does not build here, so
+          # the job costs two minutes rather than fifteen, and the four metrics that exist
+          # are all portable. The three that need a window (time to first frame, RSS at
+          # rest, CPU over five minutes) are measured by nothing, and ADR 0013 says so
+          # rather than pretending a CI runner could.
+          - name: linux-x64 (release, benchmarks)
+            os: ubuntu-latest
+            preset: linux-release
+            needs_cef: false
+            runs_bench: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -238,6 +265,60 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+      # -----------------------------------------------------------------------
+      # The performance gate
+      # -----------------------------------------------------------------------
+      # Two paths, and they never run in the same invocation of this workflow.
+      #
+      # The ordinary one compares this commit against bench/baseline-linux-x64.json and
+      # fails the build when something got more than ten percent worse -- unless the
+      # measurement cannot support a gate that tight, in which case it says so and gates
+      # nothing. That rule is sonora::bench's, it is the subject of ADR 0013, and it has a
+      # test file of its own; nothing about it is decided in this YAML.
+      #
+      # The other is a manual dispatch with record_baseline, which runs the suite three
+      # times and appends the samples into one file. Three runs rather than one because a
+      # single process's spread measures that process's luck: the same code measured 80.2
+      # to 93.7 ms across six invocations while each invocation claimed two percent noise.
+      # The result is uploaded rather than committed -- a workflow that can push to main is
+      # a workflow that can push anything to main.
+      - name: Benchmarks
+        if: matrix.runs_bench && github.event.inputs.record_baseline != 'true'
+        run: >
+          ./build/${{ matrix.preset }}/bin/sonora_bench
+          --repetitions 9
+          --workdir "${{ runner.temp }}/bench"
+          --baseline bench/baseline-linux-x64.json
+          --out "${{ runner.temp }}/bench-result.json"
+
+      - name: Record the benchmark baseline
+        if: matrix.runs_bench && github.event.inputs.record_baseline == 'true'
+        run: |
+          set -eu
+          rm -f bench/baseline-linux-x64.json
+          for run in 1 2 3; do
+            echo "::group::run $run of 3"
+            ./build/${{ matrix.preset }}/bin/sonora_bench \
+              --repetitions 9 \
+              --workdir "${{ runner.temp }}/bench" \
+              --baseline bench/baseline-linux-x64.json \
+              --append
+            echo "::endgroup::"
+          done
+          cat bench/baseline-linux-x64.json
+
+      # Kept whichever path ran: the gate's own numbers are worth having after a build that
+      # failed on them, and the recording path has nothing else to hand its file to.
+      - name: Upload the benchmark numbers
+        if: matrix.runs_bench && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonora-bench
+          path: |
+            ${{ runner.temp }}/bench-result.json
+            bench/baseline-linux-x64.json
+          if-no-files-found: ignore
+
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -257,7 +338,11 @@ jobs:
   package:
     name: MSI
     needs: [format, ui, build]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # ...and not on the dispatch that only records a benchmark baseline: that one wants two
+    # minutes of a Linux runner, not fifteen of a Windows one and an MSI nobody installs.
+    if: >
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.record_baseline != 'true')
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -335,6 +420,49 @@ jobs:
         with:
           name: sonora-msi
           path: build/packages/*.msi
+          if-no-files-found: error
+
+      # -----------------------------------------------------------------------
+      # The symbols, and this is the part of week 12 that cannot be deferred
+      # -----------------------------------------------------------------------
+      # A minidump carries module names, addresses and a build id. It does not carry
+      # symbols, and nothing reconstructs them afterwards: the names live in the PDB the
+      # linker produced for this exact link, and a PDB from a rebuild of the same commit is
+      # not that file -- the addresses move. So unlike every other artefact in this
+      # pipeline, these three cannot be regenerated on the day somebody needs them, and the
+      # day somebody needs them is always after the release.
+      #
+      # Collected from the build tree and not from the staging directory on purpose: they
+      # are deliberately not in the MSI. They are of no use to anyone installing Sonora,
+      # they are larger than the application, and the one person who wants them can take
+      # them off the release page. See ADR 0014.
+      #
+      # Found by name rather than by path because Visual Studio's generator puts them under
+      # bin/Release and Ninja's under bin -- the same reason the update package step looks
+      # for sonora_release.exe instead of spelling out where it is.
+      - name: Collect the PDBs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build/symbols | Out-Null
+          $wanted = @('Sonora.pdb', 'sonora_helper.pdb', 'sonora-updater.pdb')
+          foreach ($name in $wanted) {
+            $found = Get-ChildItem -Path build/win-release -Recurse -Filter $name -ErrorAction SilentlyContinue |
+              Sort-Object Length -Descending | Select-Object -First 1
+            if (-not $found) {
+              # Loud, and a failure. A release published without its symbols looks exactly
+              # like one published with them, right up until a dump arrives -- and by then
+              # the link that could have produced them is months gone.
+              throw "$name was not built. A release without its symbols is a release whose crashes cannot be read."
+            }
+            Write-Host ("{0,-24} {1,10:N0} bytes" -f $found.Name, $found.Length)
+            Copy-Item $found.FullName (Join-Path 'build/symbols' $found.Name)
+          }
+
+      - name: Upload the PDBs
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonora-symbols
+          path: build/symbols/*.pdb
           if-no-files-found: error
 
       # -----------------------------------------------------------------------
@@ -474,6 +602,10 @@ jobs:
         with:
           name: sonora-updates
           path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: sonora-symbols
+          path: artifacts
 
       # The signature over the manifest, and the whole of what an installation trusts.
       #
@@ -533,6 +665,7 @@ jobs:
             artifacts/*.patch
             artifacts/manifest.json
             artifacts/manifest.json.sig
+            artifacts/*.pdb
           # A draft, not a published release. The last look before something
           # carries a version number in public is a person's, and there is
           # nothing in this pipeline that can check what a release note says.
