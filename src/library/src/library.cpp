@@ -647,9 +647,9 @@ bool Library::HasCover(const std::string& hash) const {
   return statement.Step();
 }
 
-void Library::PutCover(const std::string& hash, const Cover& cover) {
+bool Library::PutCover(const std::string& hash, const Cover& cover) {
   if (hash.empty() || cover.bytes.empty()) {
-    return;
+    return false;
   }
   const std::lock_guard<std::mutex> lock(mutex_);
   // OR IGNORE rather than a check followed by an insert: the scan's workers all
@@ -658,6 +658,9 @@ void Library::PutCover(const std::string& hash, const Cover& cover) {
   Statement statement(database_,
                       "INSERT OR IGNORE INTO covers (hash, mime, bytes) VALUES (?1,?2,?3)");
   statement.Bind(1, hash).Bind(2, cover.mime).Bind(3, cover.bytes).Run();
+  // Read under the same lock as the statement that set it: sqlite3_changes is a
+  // property of the connection, and this one is shared by every worker.
+  return sqlite3_changes(database_) > 0;
 }
 
 std::optional<Cover> Library::GetCover(const std::string& hash) const {

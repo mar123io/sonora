@@ -288,11 +288,23 @@ ScanProgress Scanner::Scan(const std::filesystem::path& root,
       //
       // Writing from several threads is exactly what Library's mutex is for, and
       // the insert is OR IGNORE, so two workers finding the same cover at the
-      // same moment is not a case to handle.
+      // same moment is not a case to handle -- for the table. It was for the
+      // count, and that is the bug this shape fixes: HasCover and PutCover are
+      // two critical sections, so on an album whose tracks are read at the same
+      // moment by different workers, all of them saw HasCover false, all of them
+      // called PutCover, one insert happened and the counter went up once per
+      // worker. Five files, three sharing a cover, and progress.covers reported
+      // three instead of two -- but only on an optimised build, and only
+      // sometimes, because in a debug build the workers were never that close
+      // together.
+      //
+      // So the count comes from the insert, which is the only thing that knows.
+      // HasCover stays as the fast path, and its only job now is to keep a few
+      // hundred kilobytes of JPEG from being handed to SQLite twelve times for
+      // one album.
       if (tags->cover.has_value()) {
         const std::string hash = CoverHash(tags->cover->bytes);
-        if (!library_.HasCover(hash)) {
-          library_.PutCover(hash, *tags->cover);
+        if (!library_.HasCover(hash) && library_.PutCover(hash, *tags->cover)) {
           covers_stored.fetch_add(1, std::memory_order_relaxed);
         }
         track.cover_hash = hash;

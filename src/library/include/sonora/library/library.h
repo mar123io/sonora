@@ -119,7 +119,16 @@ class Library {
   // a rescan of an album reads its artwork once and stores it never.
 
   [[nodiscard]] bool HasCover(const std::string& hash) const;
-  void PutCover(const std::string& hash, const Cover& cover);
+
+  // Returns whether this call is the one that stored it: false for a picture that
+  // was already there, and false for a hash or a picture that is empty.
+  //
+  // The return value exists because a caller cannot work it out. HasCover followed
+  // by PutCover is two critical sections, so several of the scan's workers holding
+  // one album's cover can all see HasCover false and all call PutCover; the table
+  // is right either way, and a caller counting its own calls is not. The insert is
+  // the only place that knows.
+  bool PutCover(const std::string& hash, const Cover& cover);
   [[nodiscard]] std::optional<Cover> GetCover(const std::string& hash) const;
   [[nodiscard]] std::int64_t CoverCount() const;
 

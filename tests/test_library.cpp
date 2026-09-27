@@ -331,13 +331,13 @@ TEST_CASE("a cover is stored once per picture, not once per track", "[library][c
   const std::string hash = CoverHash(cover.bytes);
 
   REQUIRE_FALSE(library.HasCover(hash));
-  library.PutCover(hash, cover);
+  REQUIRE(library.PutCover(hash, cover));
   REQUIRE(library.HasCover(hash));
   REQUIRE(library.CoverCount() == 1);
 
   // Twice is not twice: the album's other eleven tracks hand over the same
   // picture and the second insert is ignored.
-  library.PutCover(hash, cover);
+  REQUIRE_FALSE(library.PutCover(hash, cover));
   REQUIRE(library.CoverCount() == 1);
 
   const std::optional<Cover> stored = library.GetCover(hash);
@@ -348,6 +348,46 @@ TEST_CASE("a cover is stored once per picture, not once per track", "[library][c
   REQUIRE_FALSE(library.GetCover("nothing").has_value());
   REQUIRE_FALSE(library.HasCover(""));
   REQUIRE_FALSE(library.GetCover("").has_value());
+}
+
+// The scan counts pictures by what PutCover returns, and it has to, because a
+// worker cannot tell from HasCover whether another worker is one instruction
+// behind it holding the same album cover. An INSERT OR IGNORE that ignored is a
+// picture somebody else stored, and saying so is the whole reason this returns
+// anything at all.
+TEST_CASE("storing a cover says whether it was this call that stored it", "[library][covers]") {
+  Library library = MakeLibrary();
+
+  Cover cover;
+  cover.mime = "image/jpeg";
+  cover.bytes = {0xFF, 0xD8, 0x10, 0x20};
+  const std::string hash = CoverHash(cover.bytes);
+
+  REQUIRE(library.PutCover(hash, cover));
+  REQUIRE_FALSE(library.PutCover(hash, cover));
+  REQUIRE_FALSE(library.PutCover(hash, cover));
+  REQUIRE(library.CoverCount() == 1);
+
+  // A different picture is a different row, and says so.
+  Cover other;
+  other.mime = "image/png";
+  other.bytes = {0x89, 0x50, 0x4E, 0x47};
+  REQUIRE(library.PutCover(CoverHash(other.bytes), other));
+  REQUIRE(library.CoverCount() == 2);
+
+  // Nothing to store is not something stored. Neither of these is a row, and
+  // neither may be counted as one.
+  REQUIRE_FALSE(library.PutCover("", cover));
+  Cover empty;
+  empty.mime = "image/jpeg";
+  REQUIRE_FALSE(library.PutCover("has-a-hash-but-no-bytes", empty));
+  REQUIRE(library.CoverCount() == 2);
+
+  // And the same bytes under a hash of somebody else's choosing is still a new
+  // row, because the table's key is the hash it was given and not the bytes. The
+  // scan never does this; the return value is about the insert, not about trust.
+  REQUIRE(library.PutCover("a-hash-nobody-computed", cover));
+  REQUIRE(library.CoverCount() == 3);
 }
 
 TEST_CASE("a cover survives bytes that are not text", "[library][covers]") {
