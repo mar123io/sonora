@@ -7,6 +7,7 @@
 
 #include "cef/bridge_router.h"
 #include "cef/event_channel.h"
+#include "cef/update_service.h"
 #include "include/cef_parser.h"
 #include "include/wrapper/cef_helpers.h"
 
@@ -108,6 +109,23 @@ void SonoraClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
 
   browser_ = nullptr;
   platform::RequestQuit(0);
+}
+
+void SonoraClient::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
+                                        bool is_loading,
+                                        bool can_go_back,
+                                        bool can_go_forward) {
+  CEF_REQUIRE_UI_THREAD();
+  (void)browser;
+  (void)can_go_back;
+  (void)can_go_forward;
+  if (is_loading) {
+    return;
+  }
+  // Fires again on every navigation and on every reload; NotifyUiLoaded is written for
+  // that and records the launch once. A page that reloads has not made the installation
+  // any more or less able to start.
+  NotifyUiLoaded();
 }
 
 void SonoraClient::OnLoadError(CefRefPtr<CefBrowser> browser,

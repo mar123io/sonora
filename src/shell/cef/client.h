@@ -57,6 +57,16 @@ class SonoraClient final : public CefClient,
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
   // CefLoadHandler
+  //
+  // OnLoadingStateChange is where an update stops being provisional: the window is up and
+  // the main frame has finished loading, which is the most this process can honestly
+  // claim about whether the version it is running works. ADR 0011 calls that a milestone
+  // rather than a deadline, and it is the reason there is no twenty-second timer anywhere
+  // in this project.
+  void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
+                            bool is_loading,
+                            bool can_go_back,
+                            bool can_go_forward) override;
   void OnLoadError(CefRefPtr<CefBrowser> browser,
                    CefRefPtr<CefFrame> frame,
                    ErrorCode error_code,

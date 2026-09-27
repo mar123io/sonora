@@ -21,6 +21,7 @@
 
 #include <sonora/assets/asset_store.h>
 #include "cef/runtime.h"
+#include "cef/update_service.h"
 #include "play_command.h"
 
 namespace {
@@ -147,6 +148,15 @@ int sonora::platform::AppMain() {
                  "sonora: another copy holds the claim and is not answering.\n"
                  "        Close it (or end Sonora.exe in Task Manager) and try again.\n");
     return 1;
+  }
+
+  // Before CEF, before the window, before the library: if an update is half done, this
+  // is the only moment at which finishing it is cheap. RecoverBeforeStartup never moves
+  // anything itself -- it cannot, it is running from the directory that would move -- so
+  // when there is moving to do it starts the out-of-tree updater and says so, and the
+  // right thing to do then is to exit. See ADR 0011.
+  if (sonora::shell::RecoverBeforeStartup() == sonora::shell::StartupAction::kHandOff) {
+    return 0;
   }
 
   // Every start, not once at install time: during development this executable
@@ -278,6 +288,10 @@ int sonora::platform::AppMain() {
 
   window->Show();
 
+  // From here the update check is a separate process on a timer, and this one has nothing
+  // more to do with it until it exits.
+  sonora::shell::StartPeriodicCheck();
+
   const int exit_code = RunEventLoop();
 
   // The ordinary path captured this in the close handler. This is the other
@@ -289,6 +303,10 @@ int sonora::platform::AppMain() {
   if (have_placement) {
     WritePlacement(placement_path, last_placement);
   }
+
+  // A staged update is applied on the way out, by a process that is about to be the only
+  // one holding these files. It waits for this one to go.
+  sonora::shell::ApplyStagedUpdateAtExit();
 
   // Order matters: the window (and with it the browser's parent) must outlive
   // CefShutdown, so the browser is destroyed before its host disappears.

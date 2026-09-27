@@ -21,7 +21,8 @@ add_library(sonora_cef STATIC
   cef/render_process.cpp
   cef/runtime.cpp
   cef/scheme_handler.cpp
-  cef/timer.cpp)
+  cef/timer.cpp
+  cef/update_service.cpp)
 
 target_include_directories(sonora_cef PUBLIC
   "${CMAKE_CURRENT_LIST_DIR}")  # so #include "cef/app.h" resolves
@@ -42,6 +43,11 @@ target_link_libraries(sonora_cef PUBLIC
   sonora::bridge
   sonora::library
   sonora::state
+  # The updater's decisions, for the four places the shell touches an update: recovery at
+  # startup, the launch flag, the periodic check and the hand-off at exit. Every one of
+  # them is a call into sonora::update or a spawn of sonora-updater; none of them moves a
+  # file. See cef/update_service.h.
+  sonora::update
   sonora::platform
   sonora::core
   libcef_lib
@@ -180,7 +186,12 @@ if(WIN32)
   # signature takes the set name among the arguments that apply to the whole
   # call, and once parsing has entered a per-artifact block (RUNTIME, LIBRARY,
   # ARCHIVE) anything that belongs outside it is simply "an unknown argument".
-  install(TARGETS sonora sonora_helper
+  # sonora_updater is in the payload and not in the dependency set's exclusions: it is a
+  # third executable that ships, and the tree it ships in is the tree it will one day move.
+  # It is also the reason the install rules and the update package cannot be allowed to
+  # disagree -- a payload without the updater is an installation that can never update, and
+  # nothing about it would look wrong.
+  install(TARGETS sonora sonora_helper sonora_updater
     RUNTIME_DEPENDENCY_SET sonora_runtime
     RUNTIME DESTINATION ".")
 
