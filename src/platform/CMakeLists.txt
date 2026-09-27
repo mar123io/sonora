@@ -11,7 +11,11 @@ target_include_directories(sonora_platform PUBLIC
 # sonora::audio for the miniaudio header and its one compiled translation unit.
 # The audio device is the exception to the per-OS rule above -- see the comment
 # at the top of audio/audio_device_miniaudio.cpp.
-target_link_libraries(sonora_platform PUBLIC sonora::core sonora::audio)
+# sonora::update for the two interfaces the platform layer implements on its
+# behalf -- the durable flush and the HTTP fetcher. The direction is the right way
+# round: the updater's decisions know nothing about an operating system, and the
+# operating system's file knows about them.
+target_link_libraries(sonora_platform PUBLIC sonora::core sonora::audio sonora::update)
 
 target_sources(sonora_platform PRIVATE audio/audio_device_miniaudio.cpp)
 
@@ -27,6 +31,8 @@ if(WIN32)
     win/shell_integration_win32.cpp
     win/single_instance_win32.cpp
     win/url_scheme_win32.cpp
+    win/update_host_win32.cpp
+    win/http_win32.cpp
     win/entry_win32.cpp)
   # dwmapi: dark title bar. shcore is not needed, per-monitor v2 awareness comes
   # from the application manifest (see src/shell/sonora.manifest).
@@ -42,8 +48,9 @@ if(WIN32)
   # comctl32: SetWindowSubclass, which is how the shell integration sees the
   # application window's messages without window_win32.cpp knowing it exists.
   # advapi32: the registry, for the sonora:// scheme.
+  # winhttp: one GET, for the update manifest and the packages it names.
   target_link_libraries(sonora_platform PRIVATE
-    dwmapi shell32 propsys shlwapi comctl32 advapi32 WindowsApp)
+    dwmapi shell32 propsys shlwapi comctl32 advapi32 WindowsApp winhttp)
 
 elseif(APPLE)
   set(sonora_platform_mac_sources
@@ -61,7 +68,9 @@ elseif(APPLE)
     shared/displays_none.cpp
     shared/shell_integration_none.cpp
     shared/single_instance_none.cpp
-    shared/url_scheme_none.cpp)
+    shared/url_scheme_none.cpp
+    shared/update_host_none.cpp
+    shared/http_none.cpp)
   set_source_files_properties(${sonora_platform_mac_sources}
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   # MediaPlayer: MPNowPlayingInfoCenter and MPRemoteCommandCenter. Compiled by
@@ -87,5 +96,7 @@ else()
     shared/displays_none.cpp
     shared/shell_integration_none.cpp
     shared/single_instance_none.cpp
-    shared/url_scheme_none.cpp)
+    shared/url_scheme_none.cpp
+    shared/update_host_none.cpp
+    shared/http_none.cpp)
 endif()
