@@ -6,8 +6,8 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 namespace sonora::library {
@@ -23,15 +23,56 @@ constexpr auto kProgressInterval = std::chrono::milliseconds(50);
   return std::string(text.begin(), text.end());
 }
 
-[[nodiscard]] std::string LowerAscii(std::string text) {
-  // ASCII only, on purpose. This is used on file extensions, which are ASCII in
-  // every format this project can decode, and a locale-aware lowercase would
-  // make the answer depend on the machine's settings.
-  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char character) {
-    return static_cast<char>(character >= 'A' && character <= 'Z' ? character + ('a' - 'A')
-                                                                  : character);
-  });
-  return text;
+// Whether a path ends in one of the extensions, without allocating anything.
+//
+// The version this replaced was three allocations per file: extension() builds a path,
+// u8string() builds a string, and LowerAscii() copies it again -- all to answer a question
+// about the last five characters of a name that was already in memory. A scan at startup
+// asks it once per file in the music folder, so three allocations became sixty thousand on
+// a library of twenty.
+//
+// path::string_type rather than a spelling of it: on Windows the native string is wide, on
+// POSIX it is narrow, and this compares ASCII against both without knowing which it has.
+// That is the whole reason it is written against native() -- see ADR 0002 on where an
+// #ifdef is allowed to live, which is not here.
+[[nodiscard]] bool HasAnyExtension(const std::filesystem::path& path,
+                                   const std::vector<std::string>& lowercase_extensions) {
+  const std::filesystem::path::string_type& native = path.native();
+  for (const std::string& extension : lowercase_extensions) {
+    if (native.size() < extension.size()) {
+      continue;
+    }
+    std::size_t at = native.size() - extension.size();
+    // The extension must be the whole tail and must not swallow a directory separator:
+    // "\\music\\.mp3" is a file called ".mp3" and matches, "\\music.mp3\\x" does not reach
+    // here.
+    bool matches = true;
+    for (std::size_t i = 0; i < extension.size(); ++i) {
+      // Compared as an unsigned code point, which is the one spelling that is not a dead
+      // comparison on one of the two platforms: path::value_type is a signed char on POSIX
+      // and an unsigned wchar_t on Windows, so `> 127` and `< 0` are each always false
+      // somewhere. Anything above 127 -- a UTF-8 continuation byte or a wide character --
+      // simply does not match, which is correct: no extension here has one.
+      const auto code =
+          static_cast<std::make_unsigned_t<std::filesystem::path::value_type>>(native[at + i]);
+      if (code > 127) {
+        matches = false;
+        break;
+      }
+      char lowered = static_cast<char>(code);
+      if (lowered >= 'A' && lowered <= 'Z') {
+        lowered = static_cast<char>(lowered + ('a' - 'A'));
+      }
+      if (lowered != extension[i]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The filesystem's own clock, in nanoseconds.
@@ -99,10 +140,16 @@ ScanProgress Scanner::Scan(const std::filesystem::path& root,
   // One query for the whole index instead of one per file. A personal library is
   // tens of thousands of rows, so this map is a few megabytes and the scan then
   // touches the database only to write.
-  const std::unordered_map<std::string, FileStamp> stamps = library_.Stamps();
+  //
+  // It is also the only table this function keeps. Every file the walk finds is erased from
+  // it, so whatever is left at the end is exactly what is gone. The version this replaced
+  // built a second set holding a copy of every path in the library and then looked each row
+  // up in it to find the missing ones; erasing as it goes does the same work with one hash
+  // table instead of two and nothing copied -- about 4 MiB and 50,000 allocations less on a
+  // library of fifty thousand tracks, at every start.
+  std::unordered_map<std::string, FileStamp> stamps = library_.Stamps();
 
   std::vector<Job> jobs;
-  std::unordered_set<std::string> seen;
 
   // ---- the walk, on this thread ------------------------------------------
   //
@@ -133,9 +180,7 @@ ScanProgress Scanner::Scan(const std::filesystem::path& root,
     if (!entry.is_regular_file(entry_error) || entry_error) {
       continue;
     }
-    const std::string extension = LowerAscii(ToUtf8(entry.path().extension()));
-    if (std::find(options_.extensions.begin(), options_.extensions.end(), extension) ==
-        options_.extensions.end()) {
+    if (!HasAnyExtension(entry.path(), options_.extensions)) {
       continue;
     }
 
@@ -154,12 +199,15 @@ ScanProgress Scanner::Scan(const std::filesystem::path& root,
     job.path = entry.path();
     job.utf8 = ToUtf8(entry.path());
     ++progress.files_seen;
-    seen.insert(job.utf8);
 
     const auto known = stamps.find(job.utf8);
     if (known != stamps.end()) {
-      if (known->second.mtime_ns == job.mtime_ns &&
-          known->second.size_bytes == job.size_bytes) {
+      const bool unchanged =
+          known->second.mtime_ns == job.mtime_ns && known->second.size_bytes == job.size_bytes;
+      // Erased whether or not it changed: either way the file is here, and what is left in
+      // the map when the walk ends is what is not.
+      stamps.erase(known);
+      if (unchanged) {
         continue;  // The whole point: no tag read, no write, no work.
       }
       job.existed = true;
@@ -352,14 +400,14 @@ ScanProgress Scanner::Scan(const std::filesystem::path& root,
       prefix += separator;
     }
 
+    // Whatever the walk did not erase. No lookup per row and no second table: a path still
+    // in here is a path the walk did not find.
     std::vector<std::int64_t> gone;
     for (const auto& [path, stamp] : stamps) {
       if (path.compare(0, prefix.size(), prefix) != 0) {
         continue;
       }
-      if (seen.find(path) == seen.end()) {
-        gone.push_back(stamp.id);
-      }
+      gone.push_back(stamp.id);
     }
     library_.RemoveBatch(gone);
     progress.removed = static_cast<int>(gone.size());
