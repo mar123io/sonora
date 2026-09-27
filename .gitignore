@@ -32,6 +32,16 @@ compile_commands.json
 # Scratch space for pair-programming sessions: notes and staged copies, not source
 Claude outputs/
 
+# Private keys, and this line is not decoration.
+#
+# tools/update_keygen.ps1 writes the release key's private half to a file, and a private key
+# that reaches a commit has to be treated as compromised from that moment -- rewriting the
+# history does not un-publish it. The script defaults to writing outside this tree for the
+# same reason; this is the second lock on the same door.
+*.pem
+*.key
+*.pfx
+
 # OS noise
 Thumbs.db
 desktop.ini

@@ -26,7 +26,12 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Out = 'sonora-release-key.pem'
+    # Outside the repository, deliberately. The first version of this defaulted to the
+    # working directory, where one `git add -A` would have committed a private key -- and a
+    # private key that has been in a commit is compromised from that moment, because
+    # rewriting the history does not un-publish what was pushed. .gitignore refuses *.pem as
+    # well, but a default that cannot go wrong beats a rule that catches it going wrong.
+    [string]$Out = (Join-Path $env:TEMP 'sonora-release-key.pem')
 )
 
 $ErrorActionPreference = 'Stop'

@@ -15,7 +15,9 @@ Replacing it is four steps, and the last one is the one people skip.
 ```
 
 It prints the **public** half as a C++ array ready to paste, and writes the **private** half
-to a PEM file whose path it tells you. It also prints the two commands that follow, which are
+to a PEM file **outside this repository** — under `%TEMP%` — whose path it tells you. Outside
+on purpose: a default that cannot go wrong beats a rule that catches it going wrong, and
+`.gitignore` refusing `*.pem` is the second lock on that door rather than the first. It also prints the two commands that follow, which are
 the ones in step 3.
 
 The private half is now a file on your disk. It stops being a secret the moment it is
