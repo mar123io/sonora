@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -22,12 +23,20 @@ using sonora::update::Version;
 
 // The manifest the release workflow produces, byte for byte, together with a real
 // Ed25519 signature over exactly these bytes -- produced by `openssl pkeyutl
-// -sign -rawin` with the development key whose public half is in signature.cpp.
+// -sign -rawin`.
 //
 // That crossing matters more than the test does: the release is signed by OpenSSL
 // on a runner and verified by libsodium on a user's machine, and the only way to
 // know those two agree about Ed25519 is to check a signature one of them made with
 // the other. Editing a single character below breaks this test, which is the point.
+//
+// Signed with a key that belongs to this file and to nothing else -- kTestKey below --
+// and NOT with whatever ReleaseKeys() happens to return. That distinction was learnt by
+// rotating the release key for v1.0.0 and watching this test go red: it had pinned a
+// signature made by the production key, so the suite could not survive the one operation
+// the signing scheme exists to support. What is under test here is that two
+// implementations of Ed25519 agree, and that property has nothing to do with which key
+// ships in the binary.
 constexpr std::string_view kManifest = R"json({
   "schema": 1,
   "channel": "stable",
@@ -58,8 +67,18 @@ constexpr std::string_view kManifest = R"json({
 })json";
 
 constexpr std::string_view kManifestSignature =
-    "829937c54edbabab5c30beea7ca94ee52eb35a545d549a9d1943f6456ef2c0f2"
-    "63774c58dc17ccafbe5a8fac94e26efe9e29cdb8f5ef34c212a469087dfd730b";
+    "be0287fba1e508e6656fbb43bb6e630cdda4c5959d027634c08562613c8768c2"
+    "6ffc61a96f6daa813273d4652ad7c5eb429fa80bb7b9aa1c0f4582f46c40b808";
+
+// The public half of the key that signed it. Its private half was generated for this file,
+// used once, and thrown away -- it signs one 813-byte string that is not a release and never
+// will be, so there is nothing for it to protect.
+constexpr sonora::update::PublicKey kTestKey = {
+    0x7e, 0xb9, 0xc3, 0xad, 0xd2, 0x2d, 0x31, 0x91, 0x07, 0xcd, 0xe8,
+    0x83, 0x59, 0x2e, 0xbe, 0x19, 0xc4, 0xc4, 0x9e, 0xd3, 0x52, 0xb0,
+    0xba, 0x88, 0x2e, 0x26, 0x38, 0xc2, 0x45, 0x86, 0xbe, 0x27,
+};
+constexpr std::array<sonora::update::PublicKey, 1> kTestKeys = {kTestKey};
 
 std::span<const std::uint8_t> Bytes(std::string_view text) {
   return {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()};
@@ -95,8 +114,7 @@ std::string With(std::string_view from, std::string_view to) {
 TEST_CASE("OpenSSL signs and libsodium verifies the same Ed25519") {
   const auto signature = sonora::update::ParseSignature(kManifestSignature);
   REQUIRE(signature.has_value());
-  CHECK(sonora::update::VerifyDetached(Bytes(kManifest), *signature,
-                                       sonora::update::ReleaseKeys()));
+  CHECK(sonora::update::VerifyDetached(Bytes(kManifest), *signature, kTestKeys));
 }
 
 TEST_CASE("one byte of the manifest changed is a signature that does not verify") {
@@ -110,14 +128,13 @@ TEST_CASE("one byte of the manifest changed is a signature that does not verify"
   REQUIRE(at != std::string::npos);
   tampered[at] = '5';
 
-  CHECK_FALSE(sonora::update::VerifyDetached(Bytes(tampered), *signature,
-                                             sonora::update::ReleaseKeys()));
+  CHECK_FALSE(sonora::update::VerifyDetached(Bytes(tampered), *signature, kTestKeys));
 }
 
 TEST_CASE("an empty message never verifies, whatever the signature") {
   const auto signature = sonora::update::ParseSignature(kManifestSignature);
   REQUIRE(signature.has_value());
-  CHECK_FALSE(sonora::update::VerifyDetached({}, *signature, sonora::update::ReleaseKeys()));
+  CHECK_FALSE(sonora::update::VerifyDetached({}, *signature, kTestKeys));
 }
 
 TEST_CASE("verification against no keys fails rather than succeeding vacuously") {
