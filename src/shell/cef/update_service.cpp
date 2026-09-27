@@ -35,13 +35,13 @@ bool& LaunchConfirmed() {
 }
 
 std::optional<std::filesystem::path> UpdaterExecutable() {
-  const auto self = platform::ExecutablePath();
-  if (!self.has_value()) {
+  const std::filesystem::path self = platform::ExecutablePath();
+  if (self.empty()) {
     return std::nullopt;
   }
-  std::filesystem::path updater = self->parent_path() / "sonora-updater";
-  if (!self->extension().empty()) {
-    updater += self->extension();  // ".exe", without this file having to know that
+  std::filesystem::path updater = self.parent_path() / "sonora-updater";
+  if (!self.extension().empty()) {
+    updater += self.extension();  // ".exe", without this file having to know that
   }
   return updater;
 }
@@ -67,14 +67,14 @@ std::optional<update::Version> ThisVersion() {
 
 update::Layout UpdateLayout() {
   update::Layout layout;
-  const auto self = platform::ExecutablePath();
-  if (!self.has_value()) {
+  const std::filesystem::path self = platform::ExecutablePath();
+  if (self.empty()) {
     // No executable path means no updater. Pointing the layout at the current directory
     // would put a journal somewhere arbitrary, which is worse than a layout that finds
     // nothing.
     return layout;
   }
-  const std::filesystem::path installation = self->parent_path();
+  const std::filesystem::path installation = self.parent_path();
   layout.root = installation.parent_path();
   layout.name = installation.filename().string();
   return layout;

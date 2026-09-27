@@ -1386,6 +1386,37 @@ limita il danno è che decidono *se* libsodium si costruisce, non *quale*: la ve
 quella del baseline, e con la cache binaria questo percorso gira una volta per baseline e
 non a ogni push.
 
+**7. Due funzioni con lo stesso nome, e su Windows non se ne accorge nessuno.** Il
+link di `sonora-updater` su Linux:
+
+```
+multiple definition of `sonora::platform::ExecutablePath()';
+  paths_stub.cpp:8: first defined here
+```
+
+`sonora::platform::ExecutablePath()` esiste in `paths.h` dalla settimana 2 e restituisce
+un `std::filesystem::path`. Io ne ho dichiarata una seconda in `update_host.h` che
+restituisce un `std::optional<std::filesystem::path>` — e due dichiarazioni dello stesso
+nome che differiscono **solo** per il tipo di ritorno non sono un overload. Non se n'è
+accorto nessuno perché nessuna unità di traduzione includeva entrambi gli header.
+
+Quello che è successo poi vale la settimana. **L'ABI Itanium non mangla il tipo di
+ritorno, MSVC sì.** Quindi su Linux le due definizioni sono diventate lo stesso simbolo e
+`ld` ha rifiutato il duplicato; su Windows sono rimaste due funzioni distinte e ha
+linkato. Su macOS ha linkato per un terzo motivo ancora: l'eseguibile non aveva bisogno
+di niente da `paths_mac.o`, quindi il linker non l'ha mai tirato dentro l'archivio e il
+duplicato non si è mai incontrato.
+
+Tre piattaforme, tre esiti diversi, un solo errore. E l'esito su Windows non era
+"funziona": era che **quale delle due `ExecutablePath` chiamava l'updater dipendeva da
+quale membro dell'archivio statico il linker pescava per primo** — e quella funzione
+decide quale cartella l'updater sposta. Il rosso di Linux non era un fastidio di
+portabilità, era l'unico dei tre linker che me l'ha detto.
+
+Un nome, una definizione, in `paths.h`. E la nota sopra la riga che non c'è più, perché
+la prossima persona che cerca `ExecutablePath` in `update_host.h` deve trovare il motivo
+per cui non la trova.
+
 ### Cosa ho imparato
 
 - **Misura il contenitore prima di scegliere l'algoritmo.** Avevo l'ipotesi giusta per la

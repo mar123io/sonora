@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "sonora/platform/paths.h"
 #include "sonora/update/filestore.h"
 
 namespace sonora::platform {
@@ -23,9 +24,20 @@ namespace sonora::platform {
 // platforms yet -- the same shape as displays_none.cpp and the rest, and for the same
 // reason: a stub that lies is worse than a platform that says no.
 
-// Where this process was loaded from. The installation directory is its parent, and
-// that directory's parent is the root the four siblings of ADR 0011 live in.
-[[nodiscard]] std::optional<std::filesystem::path> ExecutablePath();
+// Where this process was loaded from is NOT here: sonora::platform::ExecutablePath()
+// has existed in paths.h since week 2, and this header declared a second one returning
+// an optional.
+//
+// Two declarations of one name differing only in their return type is not an overload,
+// and what happened next is worth the four lines. No translation unit included both
+// headers, so nothing complained; the Itanium ABI does not mangle the return type, so
+// the two definitions became one symbol and GNU ld refused the duplicate; MSVC does
+// mangle it, so on Windows they were two distinct functions and it linked. The
+// installation directory that the updater moves was therefore decided by which member
+// of a static archive the linker happened to pull first.
+//
+// One name, one definition, in paths.h -- included above. It returns an empty path
+// rather than an empty optional when it cannot answer.
 
 // Copies the running executable somewhere outside the installation and returns where.
 //

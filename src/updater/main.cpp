@@ -111,12 +111,12 @@ std::optional<Options> Parse(const std::vector<std::string>& args) {
 }
 
 bool RunningInside(const fs::path& tree) {
-  const auto self = sonora::platform::ExecutablePath();
-  if (!self.has_value()) {
+  const fs::path self = sonora::platform::ExecutablePath();
+  if (self.empty()) {
     return true;  // if it cannot be known, assume the answer that is safe
   }
   std::error_code ec;
-  const fs::path here = fs::weakly_canonical(self->parent_path(), ec);
+  const fs::path here = fs::weakly_canonical(self.parent_path(), ec);
   const fs::path there = fs::weakly_canonical(tree, ec);
   const auto mismatch = std::mismatch(there.begin(), there.end(), here.begin(), here.end());
   return mismatch.first == there.end();

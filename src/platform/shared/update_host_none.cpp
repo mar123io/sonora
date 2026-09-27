@@ -18,10 +18,6 @@ namespace sonora::platform {
 // on both, including the end-to-end tests, which is why the day this file becomes five
 // real functions is a short day.
 
-std::optional<std::filesystem::path> ExecutablePath() {
-  return std::nullopt;
-}
-
 std::optional<std::filesystem::path> CopyExecutableToTemporary(std::string_view) {
   return std::nullopt;
 }

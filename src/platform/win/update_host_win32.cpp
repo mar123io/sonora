@@ -30,27 +30,6 @@ class Handle {
   HANDLE handle_;
 };
 
-// GetModuleFileNameW truncates rather than failing on a path longer than the buffer,
-// and reports success while doing it -- so the only way to know is to grow until the
-// returned length is shorter than what was offered.
-std::optional<std::wstring> ModuleFileName() {
-  std::vector<wchar_t> buffer(MAX_PATH);
-  while (true) {
-    const DWORD written =
-        ::GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-    if (written == 0) {
-      return std::nullopt;
-    }
-    if (written < buffer.size() - 1) {
-      return std::wstring(buffer.data(), written);
-    }
-    if (buffer.size() >= 32768) {
-      return std::nullopt;
-    }
-    buffer.resize(buffer.size() * 2);
-  }
-}
-
 std::optional<std::filesystem::path> TemporaryDirectory() {
   std::vector<wchar_t> buffer(MAX_PATH + 1);
   DWORD written = ::GetTempPathW(static_cast<DWORD>(buffer.size()), buffer.data());
@@ -111,18 +90,10 @@ std::wstring Widen(std::string_view text) {
 
 }  // namespace
 
-std::optional<std::filesystem::path> ExecutablePath() {
-  const auto name = ModuleFileName();
-  if (!name.has_value()) {
-    return std::nullopt;
-  }
-  return std::filesystem::path(*name);
-}
-
 std::optional<std::filesystem::path> CopyExecutableToTemporary(std::string_view stem) {
-  const auto self = ExecutablePath();
+  const std::filesystem::path self = ExecutablePath();
   const auto temporary = TemporaryDirectory();
-  if (!self.has_value() || !temporary.has_value()) {
+  if (self.empty() || !temporary.has_value()) {
     return std::nullopt;
   }
   // The process id in the name so that two of these cannot collide, and so that a
@@ -130,7 +101,7 @@ std::optional<std::filesystem::path> CopyExecutableToTemporary(std::string_view 
   const std::wstring name =
       Widen(stem) + L"-" + std::to_wstring(::GetCurrentProcessId()) + L".exe";
   const std::filesystem::path destination = *temporary / name;
-  if (::CopyFileW(self->c_str(), destination.c_str(), FALSE) == 0) {
+  if (::CopyFileW(self.c_str(), destination.c_str(), FALSE) == 0) {
     return std::nullopt;
   }
   return destination;
