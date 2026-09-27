@@ -387,8 +387,10 @@ Il progetto viene giudicato da questa settimana. Non comprimerla.
   1. [x] una frase che dice cosa è e perché esiste
   2. [x] una GIF (10-15 s): app che parte, riproduce, appare nel pannello media di Windows
   3. [x] il diagramma dell'architettura — due SVG generati da uno script, chiaro e scuro
-  4. [x] **la tabella delle performance**, con lo script per riprodurla — misurata sul runner,
-         27 campioni per metrica, con l'incertezza della mediana accanto a ogni numero
+  4. [x] **la tabella delle performance**, con lo script per riprodurla — 27 campioni per
+         metrica con l'incertezza della mediana accanto, e sotto una seconda tabella con gli
+         stessi numeri su tre host diversi della stessa flotta, perché è quella che dice cosa
+         valgono i primi
   5. [x] la tabella dei delta update — 223.410.842 B di payload, 49.320.420 da scaricare,
          **86.053 per aggiornare**
   6. [x] cosa è testato a mano e cosa solo compilato — una tabella affermazione/prova, seguita
@@ -408,6 +410,23 @@ Il progetto viene giudicato da questa settimana. Non comprimerla.
       qualcosa di vivo, non un compito consegnato)
       — la posizione di riproduzione che non viene ripristinata: tocca lo store durabile, una
       migrazione di schema e il bridge, e ha tre decisioni vere da prendere in PR.
+
+Non era in piano, ed è la parte che questa settimana ha insegnato di più — il tag `v1.0.0` ha
+fatto fallire la CI e le tre cose sotto sono venute da lì:
+
+- [x] **ADR 0015** — `ubuntu-latest` è una flotta e non una macchina. Tre suoi host hanno
+      misurato lo stesso commit a 133,5, 275,7 e 192,1 ms di scansione a freddo, mentre
+      `update-delta-size` tornava identica al byte tutte e tre le volte. La varianza fra host ha
+      raggiunto il doppio della regressione che il gate esiste per catturare, quindi una durata
+      è sotto gate solo su un pull request e un conteggio sempre. Corregge una conclusione
+      dell'ADR 0013.
+- [x] **`--warmup`** — i primi due campioni di ogni run misuravano glibc che faulta 8,5 MiB,
+      non la patch. Sei campioni su ventisette della baseline erano il kernel.
+- [x] **Una race nel conteggio delle copertine**, vecchia di cinque settimane: `HasCover` e
+      `PutCover` sono due sezioni critiche, quindi più worker sullo stesso album contavano
+      ognuno un inserimento che era avvenuto una volta sola. La tabella non è mai stata
+      sbagliata, il numero riportato sì. L'ha trovata il job dei benchmark, che è il solo con
+      quattro core e l'ottimizzazione accesi insieme.
 
 **Completato quando:** una persona che non ti conosce capisce in 60 secondi di README cosa
 hai costruito e quanto è difficile.

@@ -20,7 +20,9 @@ release to find out. Pushing the `v1.0.0` tag measured the cold scan at 275.660 
 baseline of 133.467 — +106.5%, with a spread of 1.23% — on six commits that touch nothing the
 benchmark links, while `update-delta-size` came back identical to the byte. `ubuntu-latest` is
 a fleet and not a machine, variance between its hosts reached twice the regression the gate
-exists to catch, and there is no threshold that separates those two.
+exists to catch, and there is no threshold that separates those two. Three of its hosts have now
+run this suite on identical code — 133.5, 275.7 and 192.1 ms of cold scan, and 525,158 bytes of
+delta on all three.
 
 ## What is measured
 
@@ -71,7 +73,7 @@ Useful flags:
 ### `--warmup`, and why it is three
 
 The first iterations of a benchmark are not measuring the benchmark. All three runs of the
-recorded baseline had the same shape:
+baseline recorded *before* this flag existed had the same shape:
 
 ```
 0.878  0.639  0.277  0.247  0.208  0.201  0.204  0.211  0.199
@@ -89,6 +91,9 @@ Discarding three takes that metric's spread from 6.7% to 2.3% and its uncertaint
 to 0.99% — which, and this is the joke, makes the gate **tighter** and so more likely to fire
 on a host it cannot see. The junk samples had been an accidental safety margin.
 
+The baseline in this directory was recorded with the flag, and the curve is gone from it: the
+largest `update-patch-apply` sample is now 1.24× the median rather than 5.2×.
+
 ## The baseline
 
 `baseline-linux-x64.json` is recorded **on the CI runner**, not on a laptop, and this is
@@ -100,9 +105,9 @@ week.
 So there is one baseline, it is committed to this repository so that a pull request is
 measured against the same numbers whoever opens it, and it belongs to **one host out of
 `ubuntu-latest`** rather than to `ubuntu-latest` — which is the sentence this file used to get
-wrong, and ADR 0015 is what corrected it. Two hosts from that fleet measured the same commit
-at 133.5 ms and 275.7 ms. Re-recording the baseline does not fix that; it moves which host is
-the lucky one.
+wrong, and ADR 0015 is what corrected it. Three hosts from that fleet have measured the same
+commit at 133.5, 275.7 and 192.1 ms. Re-recording the baseline does not fix that; it moves which
+host is the lucky one, and the third recording proved it by landing in between.
 
 ### Recording it
 

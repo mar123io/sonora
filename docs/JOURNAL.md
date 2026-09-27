@@ -2124,9 +2124,10 @@ La baseline registrata sul runner, 27 campioni per metrica su tre run indipenden
 | `update-delta-size` | 525.158 byte | 0,00% |
 | `update-patch-apply` | 0,208 ms | 2,47% |
 
-Tutte e quattro sotto un quinto della soglia, quindi **tutte e quattro sono davvero sotto
-gate** — e non era scontato: era proprio la cosa che l'ADR 0013 diceva di non dare per
-scontata. Tre run invece di uno sono bastati.
+Tutte e quattro sotto un quinto della soglia, quindi — così ho scritto quel giorno — **tutte e
+quattro sono davvero sotto gate**. Era falso, e ci sono volute ventiquattr'ore per scoprirlo:
+la sezione *Il giorno dopo* in fondo a questa voce è quello che è successo. Tre run invece di
+uno non bastavano, perché i tre run erano sulla stessa macchina.
 
 Poi c'è il confronto che non stavo cercando. Le stesse quattro metriche, la stessa suite, sul
 container dove ho sviluppato:
@@ -2220,6 +2221,195 @@ già brutto e uno che nomina il proprietario sbagliato è peggio.
   versione descriveva uno script che stampa la chiave privata a schermo, mentre quello vero la
   scrive in un file e stampa già il comando `gh secret set`. Una guida che descrive male il
   proprio strumento è peggio di nessuna guida.
+
+### Il giorno dopo — quando il gate ha rifiutato di pubblicare la release
+
+Questa sezione è scritta ventiquattr'ore dopo il resto della voce, e contraddice una delle sue
+affermazioni. La lascio dov'era invece di riscriverla, perché il modo in cui è stata scoperta
+vale più della frase corretta.
+
+Ho spinto il tag `v1.0.0`. La CI è fallita. Il job dei benchmark:
+
+```
+library-scan-cold    133.467 -> 275.660 ms  +106.5% +/- 0.8%  REGRESSED
+library-scan-rescan   19.755 ->  26.198 ms   +32.6% +/- 0.2%  REGRESSED
+update-delta-size    525158.000 -> 525158.000 bytes  +0.0%    unchanged
+update-patch-apply     0.208 ->   0.499 ms  +139.4% +/- 4.9%  REGRESSED
+```
+
+Fra il commit che aveva registrato la baseline e il tag ci sono sei commit: una chiave di
+firma, una chiave di test, una quotatura PowerShell, una capability CEF in un file che il job
+Linux non compila, e due di documentazione. Niente nello scanner, niente nell'updater, niente
+in **nessuna** unità di traduzione che il benchmark linka.
+
+**La terza riga è il gruppo di controllo, e la suite se l'era fatto per caso.**
+`update-delta-size` è la sola metrica che conta invece di cronometrare, e torna identica al
+byte: 525.158 due volte. Tutto ciò che è stato cronometrato è peggiorato, e la sola cosa che è
+stata contata non si è mossa di un'unità. Nessuna modifica a questo repository può produrre
+quel pattern.
+
+E i tre fattori sono **diversi fra loro** — ×2,07 sulla scansione a freddo, ×1,33 sulla
+riscansione, ×2,40 sulla patch. Quindi non è una macchina con il clock più lento: la scansione
+a freddo è filesystem e TagLib, la riscansione è SQLite e `stat`, la patch è banda di memoria,
+e quelle tre risorse erano peggiori di tre quantità diverse. Con spread dell'1,23% e dello
+0,29%: quell'host non era instabile, era **affidabilmente** lento, e lo avrebbe detto per
+quanto a lungo l'avessimo misurato.
+
+La riga che chiude il discorso è la più piccola. Il PR della settimana 12 che peggiorava lo
+scanner **di proposito** — legge i primi 4 KiB di tutti e quattromila i file — aveva misurato
+**217,877 ms**. Questo tag, con quella patch lontana mille miglia, ha misurato **275,660**. Il
+codice sabotato era il venti per cento più veloce di quello pulito, perché era finito su un
+host migliore.
+
+Varianza fra host: +106,5%. Regressione che il gate esiste per catturare: +55%. **Quei due
+intervalli si sovrappongono, e non esiste soglia che li separi.** Nessun numero di campioni
+aiuta: più campioni non rendono una macchina lenta meno lenta, rendono solo più certi che lo
+sia. L'ADR 0013 stimava l'incertezza *dentro* un run, e la varianza che conta è *fra* i run —
+i suoi tre run stavano nello stesso job, sulla stessa macchina, quindi non misuravano la
+varianza fra macchine: la nascondevano meglio.
+
+**L'ADR 0015** è quella correzione. Le durate falliscono solo su un pull request, dove un rosso
+arriva a qualcuno che può rileggere la tabella e rilanciare il job; un conteggio è sotto gate
+sempre; e una metrica che sparisce — o che cambia unità — fallisce in ogni modalità, perché
+quella è l'unica delle due che qualcuno potrebbe usare per rendere il gate verde cancellando un
+benchmark. La distinzione ha un nome nel codice, `IsMachineIndependentFailure`, e un test
+proprio invece di un ramo nel runner che nessuno controlla.
+
+### Il secondo difetto, che era vero e nascosto dal primo
+
+Guardando i campioni della baseline in ordine di esecuzione, nove per run, tutti e tre i run
+avevano la stessa curva:
+
+```
+0.878  0.639  0.277  0.247  0.208  0.201  0.204  0.211  0.199
+0.850  1.086  0.267  0.212  0.195  0.211  0.195  0.194  0.194
+0.824  1.018  0.243  0.198  0.194  0.201  0.194  0.193  0.196
+```
+
+Venti righe che allocano, toccano e distruggono un buffer degli stessi 8.523.776 byte in un
+ciclo la riproducono esattamente, senza niente di Sonora dentro: glibc serve la prima
+allocazione grande da `mmap`, la restituisce con `munmap`, e solo dopo un paio di giri alza la
+propria soglia e comincia a riusare pagine che il kernel ha già faultato. I primi due campioni
+di ogni run misuravano il kernel, fino a 1,086 ms contro un costo vero di 0,195.
+
+Sei campioni su ventisette. E qui la cosa che vale scrivere: scartarne tre porta l'incertezza
+di quella metrica **da 2,41% a 0,99%**. Cioè correggere la misura rende il gate **più stretto**
+e quindi più propenso a fallire su una macchina che non può vedere. **I campioni spazzatura
+stavano facendo da margine di sicurezza involontario.** La correzione va fatta comunque, perché
+un benchmark deve misurare la cosa di cui porta il nome, ma due rimedi che tirano in direzioni
+opposte sono la condizione normale di questo lavoro ed è meglio scriverla che riscoprirla.
+
+### Il terzo host, gratis, che ha chiuso la domanda aperta
+
+Rimisurare la baseline dopo la correzione del warm-up ha messo la suite su un **terzo** host, e
+quello è il primo dato dell'esperimento che l'ADR 0015 lasciava aperto. Non l'ho cercato: è
+arrivato eseguendo un passo della checklist.
+
+| metrica | host A | host B | host C | lento ÷ veloce |
+|---|---:|---:|---:|---:|
+| `library-scan-cold` | 133,467 ms | 275,660 ms | 192,101 ms | 2,07× |
+| `library-scan-rescan` | 19,755 ms | 26,198 ms | 23,135 ms | 1,33× |
+| `update-patch-apply` | ~0,199 ms | 0,499 ms | 0,328 ms | 2,51× |
+| `update-delta-size` | 525.158 B | 525.158 B | 525.158 B | **1,00×** |
+
+Un calibratore singolo — misura la macchina con qualcosa che non c'entra con Sonora, e metti il
+gate sul rapporto — funziona solo se le metriche si muovono **insieme**, cioè se il rapporto fra
+due qualsiasi di esse è una proprietà del codice e non dell'host. Non lo è:
+
+| rapporto | host A | host B | host C | lento ÷ veloce |
+|---|---:|---:|---:|---:|
+| `cold` ÷ `rescan` | 6,76 | 10,52 | 8,30 | 1,56× |
+| `patch` ÷ `rescan` | 0,0100 | 0,0190 | 0,0142 | 1,90× |
+| `cold` ÷ `patch` | 672 | 552 | 586 | **1,22×** |
+
+La previsione che avevo registrato *prima* di provarla era: i rapporti saranno più stretti
+delle durate e non abbastanza stretti. Tiene, e tiene di misura — il rapporto migliore varia di
+1,22× dove la durata migliore varia di 1,33× e la peggiore di 2,51×. Dividere per un
+calibratore comprerebbe circa un fattore due sullo spread, e 1,22× è il 22% contro una soglia
+del 10%.
+
+Si legge anche il **perché**: `cold ÷ patch` è la coppia più stretta perché entrambe sono
+limitate da quanto velocemente l'host muove byte, mentre `rescan` è SQLite e `stat` e deriva
+per conto suo. Cancellarle tutte e tre vorrebbe un calibratore per risorsa, e i numeri dicono
+che anche allora il residuo resta più grande della soglia. **Su una flotta di macchine
+disuguali un gate sul tempo di parete al 10% non si può costruire, con o senza calibratore.**
+Quello che resta è il conteggio, e il conteggio è stato perfetto tre volte su tre.
+
+### E il difetto che ha trovato il job dei benchmark facendo altro
+
+Il tag rifatto è caduto su un test dello scanner, non sul gate:
+
+```
+test_scanner.cpp:427: REQUIRE( progress.covers == 2 )  ->  3 == 2
+```
+
+Nello scanner:
+
+```cpp
+if (!library_.HasCover(hash)) {
+  library_.PutCover(hash, *tags->cover);
+  covers_stored.fetch_add(1, std::memory_order_relaxed);
+}
+```
+
+`HasCover` prende il mutex e lo rilascia, `PutCover` lo riprende: due sezioni critiche. Più
+worker che tengono la copertina dello stesso album vedono tutti `HasCover` falso, chiamano tutti
+`PutCover`, **una** riga viene inserita — la INSERT è `OR IGNORE` — e il contatore sale una
+volta per worker.
+
+Il commento sopra diceva che due worker che trovano la stessa copertina nello stesso istante
+«non è un caso da gestire», e per la tabella era vero ed è ancora vero: la tabella non è mai
+stata sbagliata. Era sbagliato solo il numero che la scansione **riporta**, e per questo è
+sopravvissuto cinque settimane senza che niente se ne accorgesse.
+
+Serviva più di un worker per vederlo: `worker_count` è `clamp(hardware_concurrency / 2, 1, 4)`,
+quindi su una macchina a due core la scansione gira con un worker solo e la corsa non può
+avvenire. Su due core quattrocento esecuzioni del test non hanno fallito una volta. **Il solo
+job che ha quattro core e l'ottimizzazione accesi insieme è quello dei benchmark, aggiunto la
+settimana prima per misurare le prestazioni.** Ha ripagato il suo costo trovando una race di
+cinque settimane, facendo una cosa per cui non era stato costruito — nella stessa settimana in
+cui il suo gate si è rivelato inaffidabile.
+
+La prova, con otto worker forzati su sessantaquattro file che portano la stessa immagine, su
+build ottimizzata:
+
+```
+prima:  22 scansioni su 200 riportano più di una copertina (peggiore: 4)
+dopo:    0 scansioni su 200 riportano più di una copertina (peggiore: 1)
+```
+
+E in tutti e quattrocento i casi `CoverCount()` valeva 1 — che è la prova che il difetto era il
+resoconto e non l'indice. Altri mille giri dopo la correzione: zero. Pulito sotto
+ThreadSanitizer, ASan, UBSan e LSan. `PutCover` ora restituisce se è stata **lei** a inserire
+(`sqlite3_changes() > 0`, letto sotto lo stesso lock dello statement, perché `changes`
+appartiene alla connessione e i worker la condividono), e il conteggio viene dall'insert, che è
+l'unica cosa che l'ha mai saputo.
+
+### Cosa ho imparato, il giorno dopo
+
+- **Il conto dei difetti di questa settimana è sei negli strumenti e due nell'applicazione, e i
+  due dell'applicazione hanno la stessa forma degli altri sei: il lavoro era giusto e il
+  resoconto era sbagliato.** La tabella delle copertine non è mai stata sbagliata, il numero
+  sì. La patch dell'updater non è mai stata lenta, la misura sì. Il difetto sta quasi sempre
+  nello strato che *racconta* cosa è successo, che è anche lo strato che nessuno pensa di
+  testare — e che nel frattempo è quello su cui si prendono le decisioni.
+- **Un gruppo di controllo che non sapevi di avere vale più di tre argomentazioni.**
+  `update-delta-size` è nella suite perché l'ADR 0013 voleva il contrasto fra una metrica esatta
+  e una rumorosa. Un anno dopo — cinque settimane, in realtà — è la riga che dimostra in un
+  colpo che il codice non è cambiato e la macchina sì. Metterla lì non era per questo, ed è
+  servita a questo.
+- **Un gate che blocca una release non sta facendo il suo lavoro: sta impedendo l'unica cosa
+  che quel giorno andava fatta.** Il lavoro del gate è tenere una regressione fuori da `main`,
+  e lo fa sul PR. Al momento del tag il codice è in `main` da giorni e un rosso può solo
+  rifiutare di costruire una release.
+- **Registrare una previsione prima di verificarla costa una riga e cambia cosa impari.**
+  «I rapporti saranno più stretti e non abbastanza» era scritto nell'ADR 0015 prima che
+  esistesse il terzo host. Il giorno dopo era 1,22× contro 1,33×, e quella coincidenza si può
+  raccontare solo se la previsione era già lì.
+- **Le ventiquattr'ore fra «tutte e quattro sono sotto gate» e «tre delle quattro non possono
+  esserlo» sono la cosa migliore che questo diario contiene.** Non perché l'errore sia
+  interessante, ma perché la correzione è arrivata da un tag che ho spinto per pubblicare, non
+  da un'ispezione. Il progetto ha continuato a insegnare qualcosa fino all'ultimo comando.
 
 ### Da riprendere
 

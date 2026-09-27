@@ -42,16 +42,34 @@ tries to port it.
 
 ## What it costs to run
 
-Measured on the CI runner, 27 samples per metric across three independent runs of the suite.
-The ± is the **uncertainty of the median** — how far it would move if it were measured
-again — and it is the number the gate consults before it is allowed to have an opinion at all.
+Measured on a GitHub-hosted runner, 27 samples per metric across three independent runs of the
+suite. The ± is the **uncertainty of the median** — how far it would move if this machine
+measured it again.
 
 | metric | median | ± | what it measures |
 | --- | ---: | ---: | --- |
-| `library-scan-cold` | 133.5 ms | 0.2% | indexing 4,000 files into an empty index |
-| `library-scan-rescan` | 19.8 ms | 0.8% | the same folder, unchanged and already indexed — what happens at every start |
+| `library-scan-cold` | 192.1 ms | 0.3% | indexing 4,000 files into an empty index |
+| `library-scan-rescan` | 23.1 ms | 0.1% | the same folder, unchanged and already indexed — what happens at every start |
 | `update-delta-size` | 525,158 B | 0.0% | the patch between two builds that differ by one file |
-| `update-patch-apply` | 0.21 ms | 2.5% | rebuilding the new package from the old one plus that patch |
+| `update-patch-apply` | 0.33 ms | 1.5% | rebuilding the new package from the old one plus that patch |
+
+**And that ± is the wrong question, which is the more useful thing this table can tell you.**
+`ubuntu-latest` is a fleet. Three of its hosts have now run this identical suite on this
+identical code, each one reporting well under one per cent of noise about itself:
+
+| metric | host A | host B | host C | slowest ÷ fastest |
+| --- | ---: | ---: | ---: | ---: |
+| `library-scan-cold` | 133.5 ms | 275.7 ms | 192.1 ms | **2.07×** |
+| `library-scan-rescan` | 19.8 ms | 26.2 ms | 23.1 ms | 1.33× |
+| `update-patch-apply` | 0.20 ms | 0.50 ms | 0.33 ms | 2.51× |
+| `update-delta-size` | 525,158 B | 525,158 B | 525,158 B | **1.00×** |
+
+The last row is the control, and the suite grew it by accident: it is the only metric that
+counts instead of timing, and it came back identical to the byte on all three. So the code did
+not change and the machine did — by up to 2.07×, which is twice the regression the gate was
+built to catch. That is why three of these four are reported and one is gated, and why a number
+here without the name of a machine beside it is not a number.
+[ADR 0015](docs/adr/0015-the-runner-is-not-one-machine.md).
 
 Reproduce them, on any of the three platforms:
 
@@ -64,16 +82,11 @@ On a pull request, a CI job fails the build when one of these gets more than 10%
 push or a tag it prints the same table and fails only on the last row — and that asymmetry is
 the most useful thing in this section.
 
-**The numbers above belong to one machine, and `ubuntu-latest` is not one machine.** Pushing
-the `v1.0.0` tag measured the cold scan at 275.7 ms against the 133.5 in the table: +106.5%,
-with a spread of 1.2%, over six commits that touch nothing the benchmark links — while
-`update-delta-size`, the only row that counts instead of timing, came back identical to the
-byte. Variance between hosts reached twice the size of the regression the gate was built to
-catch, and no threshold separates those two. So a duration is reported, a count is gated, and
-a benchmark that goes missing fails everywhere:
-[ADR 0015](docs/adr/0015-the-runner-is-not-one-machine.md).
+Host B is how this was found, and it cost a release to find: pushing the `v1.0.0` tag put the
+benchmark on it, six commits that touch nothing the benchmark links came out `+106.5%
+REGRESSED`, and the gate refused to build a release over it.
 
-Underneath that, the week-12 rule still stands: **a metric whose median is not known to better
+Underneath all of that, the week-12 rule still stands: **a metric whose median is not known to better
 than half the threshold is reported and gated on nothing**, because the same code measured 80.2
 to 93.7 ms across six runs while each run claimed 2% noise —
 [ADR 0013](docs/adr/0013-a-gate-on-a-metric-you-cannot-measure-twice.md). Two documents, two
@@ -815,8 +828,11 @@ and `update-patch-apply`, which the change cannot possibly touch, claimed −3.0
 the order flipped that to +2.7%. It was drift over minutes, not code; a quarter of the
 "improvement" was the machine having a better afternoon.
 
-So the honest answer is −7%, and the reason it is the honest answer is a metric that was in
-the suite to move by nothing.
+So the honest answer is −7% **on that machine and on Linux**, and the reason it is the honest
+answer is a metric that was in the suite to move by nothing. Both qualifiers are load-bearing:
+the expensive part of the old code was a wide-to-UTF-8 conversion that only exists on Windows,
+so the Windows half of this figure has never been measured by anybody — and
+[ADR 0015](docs/adr/0015-the-runner-is-not-one-machine.md) is what the machine half is worth.
 
 ---
 

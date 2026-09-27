@@ -85,6 +85,48 @@ gate **tighter**, and therefore **more likely** to fail a build on a machine it 
 garbage samples had been acting as an accidental safety margin, and removing them — which is
 correct — makes the real problem worse.
 
+## A third host, one day later, for free
+
+Re-recording the baseline after the warm-up fix put the suite on a third host, and that is the
+first data point of the experiment this document proposes below. It cost nothing to collect and
+it is worth more than the argument above.
+
+| metric | host A | host B | host C | slowest ÷ fastest |
+|---|---:|---:|---:|---:|
+| `library-scan-cold` | 133.467 ms | 275.660 ms | 192.101 ms | 2.07× |
+| `library-scan-rescan` | 19.755 ms | 26.198 ms | 23.135 ms | 1.33× |
+| `update-patch-apply` | ~0.199 ms | 0.499 ms | 0.328 ms | 2.51× |
+| `update-delta-size` | 525,158 B | 525,158 B | 525,158 B | **1.00×** |
+
+Three hosts, three different answers, and the same 525,158 bytes on all three. Every one of
+those runs reported under 1.3% of noise about itself.
+
+Now the question that decides whether a calibrator can work. A single calibrator cancels the
+machine only if the metrics move *together* — that is, if the ratio between any two of them is
+a property of the code rather than of the host. It is not:
+
+| ratio | host A | host B | host C | slowest ÷ fastest |
+|---|---:|---:|---:|---:|
+| `cold` ÷ `rescan` | 6.76 | 10.52 | 8.30 | 1.56× |
+| `patch` ÷ `rescan` | 0.0100 | 0.0190 | 0.0142 | 1.90× |
+| `cold` ÷ `patch` | 672 | 552 | 586 | **1.22×** |
+
+**The prediction recorded below holds, and it holds tightly.** Ratios are better than absolute
+durations — the best ratio varies by 1.22× where the best duration varies by 1.33× and the
+worst by 2.51× — and 1.22× is 22%, against a 10% gate. Dividing by a calibrator would buy
+roughly a factor of two on the spread and would still leave the gate firing on machines rather
+than on commits.
+
+The shape of it is legible, too, and it is the reason a single calibrator was never going to be
+enough: `cold` ÷ `patch` is the tightest pair because both are bound by how fast the host moves
+bytes, while `rescan` is SQLite and `stat` and drifts independently of them. Cancelling all
+three would take a calibrator per resource, and the numbers above say that even then the
+residual is larger than the threshold.
+
+So this is now a measured result rather than a design intuition: **on a fleet of unequal
+machines, a wall-clock gate at 10% cannot be built, with or without a calibrator.** What
+remains available is the count, and the count was perfect three times.
+
 ## Decision
 
 **A duration fails a build only where a person is about to look at it. A count fails everywhere.
@@ -149,7 +191,9 @@ that nobody checks.
   - *A self-hosted runner.* The actual fix, and not free: a machine somebody owns, keeps
     running, and keeps identical for as long as the baseline is supposed to mean something. A
     project that cannot promise that should not pretend its numbers are comparable.
-- **The open question is two calibrators, not one.** One for storage (write, `fsync` and read
+- **The open question is two calibrators, not one — and the section above has already
+  answered it, for free.** The first three hosts put the tightest available ratio at 1.22×
+  against a 10% gate, so what follows is kept as the reasoning and not as a plan. One for storage (write, `fsync` and read
   back a fixed number of fixed-size files) and one for memory bandwidth, gating
   `library-scan-* / storage` and `update-patch-apply / memory`. Whether it works is an empirical
   question with a cheap experiment: run the workflow several times on one commit and look at the
