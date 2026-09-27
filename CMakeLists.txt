@@ -57,6 +57,36 @@ endif()
 if(MSVC)
   add_compile_options(/W4 /permissive- /utf-8 /EHsc /Zc:__cplusplus)
   add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+  # Debug information in every configuration, Release included.
+  #
+  # A release whose crashes cannot be read is a release nobody can support, and a PDB is
+  # produced by the link -- so this is the only moment at which it can be produced. Building
+  # the same commit again next year moves the addresses, which is the whole argument of
+  # ADR 0014 and the reason the release job refuses to publish without them.
+  #
+  # Until these three lines existed a Release build emitted **no PDB at all**: CMake's
+  # /O2 /Ob2 /DNDEBUG carries no debug format, and the linker was given no /DEBUG. The CI
+  # step that attaches the PDBs to a release would have failed every release, which is that
+  # check doing its job on its first run -- the absence it found was not a missing file, it
+  # was a build that never made one.
+  #
+  # Through CMAKE_MSVC_DEBUG_INFORMATION_FORMAT and not by putting /Zi in the flags: since
+  # CMP0141 (CMake 3.25, and NEW here because this project requires 3.28) the debug format is
+  # deliberately no longer part of CMAKE_CXX_FLAGS_<CONFIG>, and writing it back in by hand
+  # would be fighting the abstraction that took it out.
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "ProgramDatabase")
+
+  # /DEBUG is what makes the linker write the PDB out. /OPT:REF and /OPT:ICF are not optional
+  # beside it: passing /DEBUG switches both of them off by default, so without them a Release
+  # build would grow and slow down in exchange for symbols -- and the point is that being able
+  # to read a dump costs the shipped binary nothing. The price paid instead is ICF's own: two
+  # identical functions can be folded into one, so a trace may name either of them, which is a
+  # far smaller confusion than a trace with no names in it.
+  add_link_options(
+    $<$<NOT:$<CONFIG:Debug>>:/DEBUG>
+    $<$<NOT:$<CONFIG:Debug>>:/OPT:REF>
+    $<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>)
 else()
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()

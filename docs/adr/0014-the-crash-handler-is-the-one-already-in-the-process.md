@@ -120,6 +120,12 @@ enough that a person can read it and decide.
   crash key `sonora_version` is the one that has to match a PDB, but a configuration file
   announcing a version that was never released is a thing a reader has to stop and check,
   and there is no reason for it to exist.
+- **A Release build has to be told to produce a PDB.** CMake's MSVC Release configuration is
+  `/O2 /Ob2 /DNDEBUG` with no debug format and no `/DEBUG` at the link, so it emits none at
+  all -- and nothing about the resulting binary looks different. The top-level CMakeLists sets
+  `CMAKE_MSVC_DEBUG_INFORMATION_FORMAT` and adds `/DEBUG /OPT:REF /OPT:ICF` for every
+  configuration that is not Debug; the last two are there because `/DEBUG` switches them off
+  by default, and symbols should cost the shipped binary nothing.
 - **Two keys in that file are load-bearing in a way their names hide.** `AppName` decides
   where the crash database goes on Windows, and its default is a folder called `CEF` in the
   user's profile -- so leaving it out does not mean "somewhere sensible", it means Sonora's

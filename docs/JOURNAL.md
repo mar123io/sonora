@@ -1779,6 +1779,18 @@ scritto **senza poterla provare**, ed è l'unica sbagliata. Adesso il flag rifiu
 stampa il comando `Page.crash` del protocollo DevTools, che fa la cosa giusta senza una riga
 di codice nostra.
 
+E un settimo, fuori conteggio perché non l'ha trovato una prova ma **un controllo che avevo
+scritto io due ore prima**. Il passo di CI che raccoglie i PDB fa `throw` se ne manca uno, e
+messo alla prova ha scoperto che la build Release **non ne produce nessuno**: la
+configurazione Release di CMake per MSVC è `/O2 /Ob2 /DNDEBUG`, senza formato di debug e
+senza `/DEBUG` al link, e un eseguibile compilato così non sembra diverso da uno con i
+simboli. Sarebbe andato in rosso ogni release, per una ragione giusta, e nessuno se ne
+sarebbe accorto prima perché nessuno aveva mai avuto bisogno di quei file.
+
+È la cosa più utile che ho scritto questa settimana, e l'ho scritta senza sapere cosa avrebbe
+trovato: un controllo la cui **prima** esecuzione è un vero positivo vale più della
+funzionalità che sorveglia.
+
 #### Come si sono trovati i numeri 2, 3, 4 e 5
 
 Leggendo `settings.dat` e `metadata` di Crashpad **byte per byte**. Non sono formati
