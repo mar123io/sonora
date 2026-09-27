@@ -144,6 +144,19 @@ bool StartCef(const RuntimeConfig& config) {
 
   g_capabilities = std::make_unique<bridge::CapabilityRegistry>(
       bridge::CapabilityRegistry::FromEnvironment(bridge::kCapabilities));
+
+  // The diagnostics are development instrumentation: the bridge's own counters, and a
+  // heartbeat emitted at 20 Hz to watch the coalescer work from inside the page. Useful
+  // every week of this project, and not something to put in front of somebody who wanted
+  // to listen to music -- the panel is a floating box over their library.
+  //
+  // So a release does not offer them, and it is the same switch as DevTools rather than a
+  // second idea of what a development build is. The page removes the panel when the
+  // capability is absent, and the heartbeat timer below never starts.
+  if (!config.enable_devtools) {
+    g_capabilities->Disable("diagnostics",
+                            "development instrumentation, not offered by a release build");
+  }
   g_metrics = std::make_unique<ShellMetrics>();
   g_events = std::make_unique<EventChannel>();
 

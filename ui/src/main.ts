@@ -209,6 +209,17 @@ async function main(): Promise<void> {
 
   const capabilities = await negotiate();
 
+  // A panel about a capability this shell does not offer has nothing to say, so it goes
+  // rather than sitting there explaining its own absence. That is the release build: the
+  // diagnostics are development instrumentation, and a floating box labelled "Bridge
+  // diagnostics" over somebody's music is furniture from a different room.
+  //
+  // Removed and not hidden, because the difference is visible in the DOM and somebody will
+  // eventually ask which it was.
+  if (!capabilities.has('diagnostics')) {
+    document.querySelector('#diagnostics-panel')?.remove();
+  }
+
   // The player first: it is what the window is for, and it should not wait
   // behind four calls that are about the bridge.
   const queue = new QueueModel();

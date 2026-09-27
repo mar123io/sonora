@@ -320,11 +320,20 @@ old one:
 ./tools/run-dev.ps1 -DisableCaps diagnostics
 ```
 
-The diagnostics rows turn amber and say they are switched off, the heartbeat is
-never subscribed to, and `diagnostics.getMetrics` answers with error code 4
-(`unavailable`) rather than 2 (`unknown method`) — the difference the page
-branches on. `shell` is marked required in the schema and refuses to be
-disabled: with `getCapabilities` gone there is nothing left to negotiate with.
+The panel disappears — removed, not hidden — the heartbeat is never subscribed
+to, and `diagnostics.getMetrics` answers with error code 4 (`unavailable`)
+rather than 2 (`unknown method`), which is the difference the page branches on.
+`shell` is marked required in the schema and refuses to be disabled: with
+`getCapabilities` gone there is nothing left to negotiate with.
+
+The same switch is what a **release build** does with the diagnostics, and for
+the same reason it is the DevTools switch rather than a second idea of what a
+development build is: the bridge's counters and a 20 Hz heartbeat are
+instrumentation for whoever is building this, and a floating box labelled
+"Bridge diagnostics" over somebody's library is furniture from a different room.
+So `win-release` does not offer them, the page removes the panel, and the
+heartbeat timer never starts. Try `player` or `library` instead to watch a
+degraded path that a user could actually meet.
 
 ### Playing a file
 
