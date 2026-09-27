@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <fstream>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -198,6 +199,22 @@ ScanProgress Scanner::Scan(const std::filesystem::path& root,
 
     job.path = entry.path();
     job.utf8 = ToUtf8(entry.path());
+
+    // DELIBERATELY SLOW, and here to make the performance gate fail on purpose. It is meant
+    // to look like a feature somebody would add: "read the first few kilobytes so a file that
+    // was renamed can be recognised by its content instead of by its path".
+    //
+    // What it really is: an open, a read and a close for every file in the library, on every
+    // single scan -- including the rescan at every start, which until now touched no file
+    // contents at all. Nothing in the diff looks expensive, which is the whole point of
+    // having a gate. Throw it away once you have seen the job go red; see "Proving the gate
+    // works" in bench/README.md.
+    {
+      std::ifstream head(job.path, std::ios::binary);
+      char fingerprint[4096];
+      head.read(fingerprint, sizeof(fingerprint));
+    }
+
     ++progress.files_seen;
 
     const auto known = stamps.find(job.utf8);
