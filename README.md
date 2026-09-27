@@ -5,7 +5,10 @@ operating-system media integration, delta updates and a signed release pipeline.
 answer one question end to end: what does it actually take to *ship* a desktop application,
 rather than to demo one?
 
-<!-- GIF -->
+![Sonora playing a track, and the Windows media panel responding to the media key](docs/images/sonora.gif)
+
+> Indexed library, gapless playback, and the Windows media panel responding to a media key
+> with the window minimised.
 
 ---
 
