@@ -9,6 +9,7 @@
 #include <sonora/update/updater.h>
 #include <sonora/update/version.h>
 
+#include "cef/crash_keys.h"
 #include "cef/timer.h"
 
 namespace sonora::shell {
@@ -166,6 +167,11 @@ void NotifyUiLoaded() {
     std::fprintf(stderr, "update: could not record that this version started\n");
     return;
   }
+  // The one transition worth attaching to a dump as it happens: up to this line a crash
+  // would have rolled this version back at the next start, and after it the same crash is
+  // a bug in a version that is staying. Everything else about the stage was set once, at
+  // startup, where the other three keys are.
+  SetUpdateCrashKey(UpdateStage());
   std::printf("update: %s started and said so\n", core::kVersion);
 }
 
@@ -194,6 +200,18 @@ void ApplyStagedUpdateAtExit() {
   }
   std::printf("update: applying %s on the way out\n",
               update::ToString(loaded.journal.to).c_str());
+}
+
+std::string UpdateStage() {
+  const update::Layout layout = UpdateLayout();
+  if (layout.root.empty()) {
+    return "none";
+  }
+  const update::LoadedJournal loaded = update::LoadJournal(layout);
+  if (!loaded.readable) {
+    return "unreadable";
+  }
+  return std::string(Describe(loaded.journal.stage));
 }
 
 std::string UpdateStatusSummary() {

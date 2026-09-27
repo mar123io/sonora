@@ -1,0 +1,99 @@
+# Crash reporting, for the Crashpad that is already inside libcef.dll.
+#
+# CEF reads this file from the directory of the executable, at startup, before anything in
+# src/shell runs. So this is configuration and not code -- see ADR 0014, including the two
+# things that follow from that: it can be edited on a machine that is crashing without a
+# rebuild, and deleting it turns crash reporting off completely. That last one is the honest
+# off switch, and it is documented in the README as one.
+#
+# The syntax is CEF's: a [Config] section of key=value, then [CrashKeys] naming the keys this
+# application is allowed to attach and how large each may be. Comments start with #.
+#
+# This is the .in: one line is substituted by CMake (see src/shell/CMakeLists.txt), the
+# result is copied next to the executable on every build and installed into the payload.
+
+[Config]
+
+# Where dumps are posted. Local, on purpose.
+#
+# ADR 0009 decided this project does not stand up services it cannot promise to keep running,
+# and a crash endpoint is exactly that: every installation would post to it forever, including
+# the ones from three years ago. tools/crash_receiver.py is a script that receives this and
+# writes the .dmp to a folder, which is enough to exercise the whole path and honest about what
+# it is -- a diagnostic tool for whoever is developing Sonora. (It started at fifty lines. What
+# it cost to make it actually receive a POST from Crashpad -- gzip, chunked framing -- is in
+# the file, and is the reason the estimate is no longer in this comment.)
+#
+# Uploading is enabled by this line existing. An empty ServerURL means dumps are written to
+# the local database and never sent, which is also a perfectly good configuration -- and it is
+# the one a user gets by deleting the ServerURL line rather than the whole file.
+#
+# A release that collected crashes from users would change this one line, and would then owe
+# those users a privacy notice that this project is not in a position to write.
+ServerURL=http://127.0.0.1:9911/crashes
+
+# Where the crash database lives, and this key is not optional in the way it looks.
+#
+# On Windows the dumps, the metrics and the database go under
+# %LOCALAPPDATA%\<AppName>\User Data -- and AppName defaults to **"CEF"**, not to the product
+# name and not to anything derived from the executable. Leaving it out does not put the
+# database somewhere harmless: it puts Sonora's crash reports in a folder called CEF in
+# somebody's profile, where nothing that uninstalls Sonora will ever find them, and where
+# whoever goes looking for them will not look.
+#
+# This is not the cache directory. CefSettings.root_cache_path decides where the CEF cache
+# goes; on Windows this key decides where crash data goes, and the two are set in different
+# places for no reason except that they are.
+AppName=Sonora
+
+# Dumps are kept and uploaded, rather than kept and forgotten.
+#
+# The three keys CEF actually reads, spelled the way it reads them -- an unrecognised key in
+# an INI file is not an error, it is a line that does nothing, which is the most expensive
+# kind of configuration there is. There is no "UploadToServer": uploading is what ServerURL
+# being set *means*, and a key that restates a decision already made is a key that will one
+# day contradict it.
+#
+# RateLimitEnabled + MaxUploadsPerDay is at most five uploads per 24 hours, plus an
+# incremental backoff up to 24 hours when an upload fails with a network or server error --
+# and, while that backoff is in effect, the daily maximum drops to one until the process
+# restarts. Worth knowing before diagnosing anything: a receiver that was not listening for
+# the first attempt is a network error, and the retry is then further away than the impatience
+# of the person waiting for it. See the note in the README about starting the receiver first.
+RateLimitEnabled=true
+MaxUploadsPerDay=5
+
+# The database is bounded here rather than in a constant somebody has to go and find. On
+# Windows a dump of a process this size is around 600 KB, so twenty megabytes is a few dozen
+# of them. Seven days rather than CEF's default of five: a crash from last Monday is still
+# worth reading on a Sunday evening.
+MaxDatabaseSizeInMb=20
+MaxDatabaseAgeInDays=7
+
+# The name and version that appear on the report.
+#
+# @PROJECT_VERSION@, and this file is therefore crash_reporter.cfg.in: the version came out
+# of the git tag in cmake/Version.cmake, the same one the executable's resources and
+# --version read. A version number typed in here by hand would be the one number in the
+# project that drifts, and it would drift silently -- a report saying 0.7.0 from a 0.6.0
+# build looks exactly like a report.
+#
+# The copy that ships is the generated one, and it is a plain file next to the executable,
+# so somebody diagnosing a crash can still edit it in place. What they cannot do is edit
+# the version in this repository and have it mean something.
+ProductName=Sonora
+ProductVersion=@PROJECT_VERSION@
+
+[CrashKeys]
+
+# The five things a stack trace does not tell you, and that decide what to look at first. Each
+# one has caused a bug in the last eleven weeks.
+#
+# Not the library path, not a file name, not anything identifying the machine: a crash report
+# is the most sensitive thing a desktop application sends, and this list is short enough that a
+# person can read it and decide. See ADR 0014.
+sonora_version=small
+sonora_build=small
+sonora_update_stage=small
+sonora_library_schema=small
+sonora_audio_started=small

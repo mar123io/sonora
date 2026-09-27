@@ -47,11 +47,35 @@ struct RuntimeConfig {
   // The command line this process was started with, so a sonora:// link in it
   // is acted on once everything exists.
   std::vector<std::string> arguments;
+
+  // "browser", or empty. From --simulate-crash, which main() refuses outside a DevTools
+  // build: an executable that will fault on request is a convenience while developing and a
+  // liability in a release (ADR 0014).
+  //
+  // The browser process only, and that is a correction rather than a scope chosen up front.
+  // The renderer was going to be crashed by loading chrome://crash, which does nothing at
+  // all under CEF: the window stays blank, because CEF serves a short list of chrome://
+  // URLs and that is not one of them. The renderer is crashed with the DevTools protocol's
+  // Page.crash instead, which needs no code here whatsoever -- the README has the one-liner.
+  std::string simulate_crash;
 };
 
-// Entry point of the helper executable: runs one CEF child process (renderer,
-// GPU, utility...) to completion and returns its exit code.
-int RunChildProcess();
+// Runs this process as a CEF sub-process if the command line says it is one, and returns the
+// exit code it should exit with. Returns **-1** when it is not one -- which is CEF's own way
+// of answering the question, and the reason nothing here parses --type= itself.
+//
+// Both executables call it, and both must call it before anything else they do.
+//
+// sonora_helper.exe is always a child, so for it this is simply the entry point: renderer,
+// GPU and utility processes are launched from it because CefSettings.browser_subprocess_path
+// points there.
+//
+// Sonora.exe is normally the browser process, and it has to call this anyway, because one
+// kind of child is launched from it no matter what that setting says: **the crash handler.**
+// Chromium starts Crashpad with InitializeCrashpadWithEmbeddedHandler, which re-runs the
+// current executable with --type=crashpad-handler. See the call site in main.cpp for what
+// that cost when it was missing.
+[[nodiscard]] int RunChildProcess();
 
 // Initializes CEF and asks it to create the browser. The browser appears
 // asynchronously, once the loop has run: BrowserViewHandle stays null until

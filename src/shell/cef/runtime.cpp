@@ -3,15 +3,19 @@
 #include <sonora/platform/app_main.h>
 #include <sonora/platform/event_loop.h>
 
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <utility>
 
 #include <sonora/bridge/capabilities.h>
+#include <sonora/library/library.h>
 
 #include "cef/app.h"
 #include "cef/client.h"
+#include "cef/crash_keys.h"
 #include "cef/desktop.h"
 #include "cef/event_channel.h"
 #include "cef/handlers.h"
@@ -20,6 +24,7 @@
 #include "cef/player_host.h"
 #include "cef/shell_metrics.h"
 #include "cef/timer.h"
+#include "cef/update_service.h"
 #include "include/cef_app.h"
 
 namespace sonora::shell {
@@ -39,7 +44,26 @@ std::unique_ptr<ShellMediaSession> g_media;
 std::unique_ptr<DesktopIntegration> g_desktop;
 std::unique_ptr<ShellHandlers> g_handlers;
 CefRefPtr<ShellTimer> g_heartbeat;
+CefRefPtr<ShellTimer> g_simulated_crash;
 bool g_initialized = false;
+
+// Long enough for the window to be on screen and the page to have finished loading, so the
+// dump looks like one from a running application rather than one from a startup that never
+// got there. Short enough that nobody waits for it.
+constexpr std::int64_t kSimulateCrashDelayMs = 3000;
+
+// A write through a null pointer, and deliberately not std::abort(): both produce a dump,
+// but an access violation at an address nobody mapped is the shape of fault a real bug
+// produces, and the stack it leaves is this function's rather than the runtime's.
+//
+// volatile so that a compiler which has proved this is undefined behaviour -- and every one
+// of them has -- emits the store anyway instead of deleting the function.
+[[noreturn]] void CrashThisProcessNow() {
+  std::fflush(nullptr);  // the log line above this is the one that says it was on purpose
+  volatile int* address = nullptr;
+  *address = 0x50'11A;
+  std::abort();  // not reached; here so the [[noreturn]] is true without the compiler guessing
+}
 
 // 20 Hz in, 4 Hz out. The ratio is the demonstration: the producer runs at the
 // rate its own work happens at and the coalescer decides what the page sees,
@@ -131,7 +155,8 @@ bool StartCef(const RuntimeConfig& config) {
   // variable uses, and the page takes the degraded path it already has rather
   // than a second one nobody exercises.
   g_player = std::make_unique<PlayerHost>();
-  if (g_player->Start()) {
+  const bool audio_started = g_player->Start();
+  if (audio_started) {
     std::printf("audio: %s\n", g_player->description().c_str());
   } else {
     g_capabilities->Disable("player", "no audio device could be opened");
@@ -172,6 +197,15 @@ bool StartCef(const RuntimeConfig& config) {
     return false;
   }
   g_initialized = true;
+
+  // The first moment a crash key can be set: Crashpad is started inside CefInitialize, so
+  // the same four calls one line higher up would be four no-ops. Nothing is lost by
+  // waiting -- a fault before the handler exists produces no dump for a key to be on -- and
+  // all four answers were already known before the call. See cef/crash_keys.h and ADR 0014.
+  SetBuildCrashKeys();
+  SetLibraryCrashKey(library::Library::kSchemaVersion);
+  SetAudioCrashKey(audio_started, g_player->description());
+  SetUpdateCrashKey(UpdateStage());
 
   g_player->StartStateEvents(*g_events);
   g_library->StartStatusEvents(*g_events);
@@ -238,6 +272,17 @@ bool StartCef(const RuntimeConfig& config) {
     });
   }
 
+  if (config.simulate_crash == "browser") {
+    // After everything else is started, because the point of the exercise is a dump from a
+    // process that was doing its job: the audio device open, the library indexed, the
+    // crash keys set. A fault three seconds into a run is a fault with a stack worth
+    // reading, and it is the only way to find out whether the four keys above actually
+    // arrive at the receiver.
+    std::printf("crash: faulting deliberately in %d ms -- --simulate-crash=browser\n",
+                static_cast<int>(kSimulateCrashDelayMs));
+    g_simulated_crash = ShellTimer::Once(kSimulateCrashDelayMs, [] { CrashThisProcessNow(); });
+  }
+
   // Gets the loop turning so OnContextInitialized fires and the browser is
   // created. Without this the application would sit idle waiting for input.
   platform::ScheduleWork(0);
@@ -257,6 +302,13 @@ void StopCef() {
   if (g_heartbeat) {
     g_heartbeat->Cancel();
     g_heartbeat = nullptr;
+  }
+  // The same, and it matters more: a deliberate crash that fires while the window is
+  // closing would produce a dump of a teardown rather than of a run, which is the one
+  // dump nobody asked for.
+  if (g_simulated_crash) {
+    g_simulated_crash->Cancel();
+    g_simulated_crash = nullptr;
   }
   // Before CefShutdown: the state timer posts CEF tasks, and the device
   // callback borrows the player.

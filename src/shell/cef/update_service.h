@@ -58,4 +58,13 @@ void ApplyStagedUpdateAtExit();
 // indistinguishable from an updater that is broken.
 [[nodiscard]] std::string UpdateStatusSummary();
 
+// The journal's stage as one word, for the sonora_update_stage crash key.
+//
+// Separate from UpdateStatusSummary rather than a substring of it: that one is prose for a
+// person reading an about panel and grows a list of refused versions, and a crash key
+// declared "small" in crash_reporter.cfg holds 64 bytes. A key that is silently truncated
+// on the one installation that has refused four updates is a key that lies exactly where
+// it matters.
+[[nodiscard]] std::string UpdateStage();
+
 }  // namespace sonora::shell

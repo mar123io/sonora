@@ -79,6 +79,31 @@ void WritePlacement(const std::filesystem::path& path,
 }  // namespace
 
 int sonora::platform::AppMain() {
+  // Before anything else at all: is this launch a CEF sub-process rather than the
+  // application? CEF answers, and if it says yes the answer is an exit code.
+  //
+  // It is not the renderer or the GPU process -- those are launched from sonora_helper.exe,
+  // which is what browser_subprocess_path is for. It is **the crash handler**, and it is
+  // launched from this executable whatever that setting says: Chromium starts Crashpad with
+  // InitializeCrashpadWithEmbeddedHandler, which re-runs the current binary with
+  // --type=crashpad-handler.
+  //
+  // Without this line that re-launch fell through into everything below, found that another
+  // Sonora already held the single-instance claim (week 9), politely handed its arguments
+  // over and exited 0. Crashpad, waiting on the other end of a named pipe, said:
+  //
+  //     TransactNamedPipe: Pipe terminata. (0x6D)
+  //     crash server failed to launch, self-terminating
+  //
+  // ...which is two error messages for "the single-instance guard killed the crash handler".
+  // The guard was not wrong -- it was the second launch of this executable. It just was not a
+  // second Sonora, and nothing had ever asked this binary to tell those two apart, because
+  // until week 12 no child process was ever launched from it.
+  const int child_exit_code = sonora::shell::RunChildProcess();
+  if (child_exit_code >= 0) {
+    return child_exit_code;
+  }
+
   std::printf("Sonora %s (%s)\n", sonora::core::kVersion, sonora::core::kGitDescribe);
 
   // Checked before anything else is built. --play is a different program that
@@ -86,7 +111,46 @@ int sonora::platform::AppMain() {
   // an underrun it reports can only have come from the audio path.
   const auto& arguments = CommandLineArguments();
   std::filesystem::path library_root;
+  std::string simulate_crash;
   for (std::size_t i = 0; i < arguments.size(); ++i) {
+    // A deliberate fault, to exercise the path from crash to symbolised stack. Refused
+    // rather than ignored outside a DevTools build: an executable that will crash on
+    // request is a convenience while developing and a liability in a release, and a flag
+    // that is silently ignored looks exactly like a crash handler that swallowed the
+    // crash -- which is the one thing this week exists to be able to tell apart.
+    if (arguments[i].starts_with("--simulate-crash")) {
+      if (!kEnableDevTools) {
+        std::fprintf(stderr, "sonora: --simulate-crash only exists in a DevTools build\n");
+        return 2;
+      }
+      const std::size_t equals = arguments[i].find('=');
+      const std::string what =
+          equals == std::string::npos ? "browser" : arguments[i].substr(equals + 1);
+      if (what == "renderer") {
+        // Named, and refused with the thing that does work, because this flag did claim to
+        // crash the renderer and it never could. The plan was to load chrome://crash; under
+        // CEF that URL does nothing at all -- the window stays blank, because CEF serves a
+        // short list of chrome:// URLs and that is not one of them.
+        //
+        // The DevTools protocol does it in one line and needs no code here, which is the
+        // better answer anyway: the renderer is already reachable from outside in exactly the
+        // builds where crashing it on purpose is reasonable.
+        std::fprintf(
+            stderr,
+            "sonora: --simulate-crash=renderer does not exist; chrome://crash is not\n"
+            "        served by CEF. Use the DevTools protocol on the port above:\n"
+            "\n"
+            "          $t = (irm http://localhost:9222/json).webSocketDebuggerUrl\n"
+            "          # ...then send {\"id\":1,\"method\":\"Page.crash\"} on that socket\n");
+        return 2;
+      }
+      if (what != "browser") {
+        std::fprintf(stderr, "sonora: --simulate-crash takes browser\n");
+        return 2;
+      }
+      simulate_crash = what;
+      continue;
+    }
     // --library <folder>: index that folder at startup and remember it. There is
     // no folder picker yet -- that needs a native file dialog, which is week 8
     // work -- and a command-line flag is the honest stand-in rather than a text
@@ -228,6 +292,7 @@ int sonora::platform::AppMain() {
   config.library_root = library_root;
   config.state_path = config.user_data_dir / "state.sqlite";
   config.arguments = arguments;
+  config.simulate_crash = simulate_crash;
   config.raise_window = [&window] {
     if (window != nullptr) {
       window->Raise();

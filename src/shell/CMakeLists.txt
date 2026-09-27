@@ -12,6 +12,7 @@ add_library(sonora_cef STATIC
   cef/app.cpp
   cef/bridge_router.cpp
   cef/client.cpp
+  cef/crash_keys.cpp
   cef/desktop.cpp
   cef/event_channel.cpp
   cef/handlers.cpp
@@ -143,6 +144,30 @@ endif()
 # application starts and exits immediately with no message.
 sonora_copy_cef_runtime(sonora)
 
+# crash_reporter.cfg has to be beside the executable too, and for the same kind of reason:
+# CEF reads it from that directory at startup and there is no way to point it elsewhere.
+# Without it crash reporting is simply off in a development build, and off in a way that looks
+# identical to a handler that is not working -- which is the failure this whole week is about
+# being able to tell apart. See ADR 0014.
+#
+# Generated like sonora.rc, and for the same reason: the one line in it that is a version
+# number comes from the project's version rather than from somebody's memory. A crash report
+# announcing 0.7.0 from a 0.6.0 build looks exactly like a crash report.
+set(SONORA_CRASH_CONFIG "${CMAKE_CURRENT_BINARY_DIR}/generated/crash_reporter.cfg")
+configure_file(
+  "${CMAKE_SOURCE_DIR}/installer/crash_reporter.cfg.in"
+  "${SONORA_CRASH_CONFIG}"
+  @ONLY)
+
+# Copied after every build rather than only at configure time: the generated file is what a
+# person diagnosing a crash edits, and a copy that happened once would leave their edit
+# behind -- while copy_if_different means an untouched one costs nothing.
+add_custom_command(TARGET sonora POST_BUILD
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${SONORA_CRASH_CONFIG}"
+          "$<TARGET_FILE_DIR:sonora>/crash_reporter.cfg"
+  COMMENT "Copying crash_reporter.cfg next to Sonora")
+
 # ---------------------------------------------------------------------------
 # What ships
 # ---------------------------------------------------------------------------
@@ -231,6 +256,13 @@ if(WIN32)
       install(FILES "${CEF_RESOURCE_DIR}/${cef_file}" DESTINATION ".")
     endif()
   endforeach()
+
+  # Crash reporting's configuration, in the payload rather than in code, which is the whole
+  # of ADR 0014's first decision. Two things follow from it being a file that ships: the MSI
+  # has to carry it -- an installed copy with no crash_reporter.cfg has crash reporting off
+  # and says nothing about it -- and a user can delete it to turn crash reporting off, which
+  # is the honest off switch and is documented in the README as one.
+  install(FILES "${SONORA_CRASH_CONFIG}" DESTINATION ".")
 
   # Chromium's licence obligations are not optional, and neither is ours. Two
   # calls rather than one list, because the second needs a name that does not
