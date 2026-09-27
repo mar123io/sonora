@@ -282,6 +282,18 @@ jobs:
       # to 93.7 ms across six invocations while each invocation claimed two percent noise.
       # The result is uploaded rather than committed -- a workflow that can push to main is
       # a workflow that can push anything to main.
+      #
+      # --report-only on every event except a pull request, and that is ADR 0015 rather than
+      # a concession. `ubuntu-latest` is a fleet and not a machine: the v1.0.0 tag measured
+      # the cold scan at 275.660 ms against a baseline of 133.467 -- +106.5% with a 1.23%
+      # spread -- while update-delta-size, the one metric that counts instead of timing, came
+      # back identical to the byte. Variance between hosts reached twice the regression the
+      # gate exists to catch, so on a tag a red gate cannot mean anything except "no release
+      # today". On a pull request it reaches a person who can re-run it, and it still fails.
+      #
+      # A metric that went missing fails in every mode, and so does a regression in a metric
+      # that was the same number every sample: --report-only downgrades a slow duration and
+      # nothing else.
       - name: Benchmarks
         if: matrix.runs_bench && github.event.inputs.record_baseline != 'true'
         run: >
@@ -290,6 +302,7 @@ jobs:
           --workdir "${{ runner.temp }}/bench"
           --baseline bench/baseline-linux-x64.json
           --out "${{ runner.temp }}/bench-result.json"
+          ${{ github.event_name == 'pull_request' && ' ' || '--report-only' }}
 
       - name: Record the benchmark baseline
         if: matrix.runs_bench && github.event.inputs.record_baseline == 'true'
