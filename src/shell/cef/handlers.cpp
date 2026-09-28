@@ -12,6 +12,7 @@
 #include <sonora/core/version.h>
 #include <sonora/library/library.h>
 
+#include "cef/agent_host.h"
 #include "cef/event_channel.h"
 #include "cef/library_host.h"
 #include "cef/player_host.h"
@@ -100,6 +101,13 @@ library::Library& ShellHandlers::RequireIndex() {
                               "the library index is not available");
   }
   return *index;
+}
+
+AgentHost& ShellHandlers::RequireAgent() {
+  if (agent_ == nullptr) {
+    throw bridge::BridgeError(bridge::ErrorCode::kUnavailable, "the agent is not available");
+  }
+  return *agent_;
 }
 
 bridge::ShellGetVersionResult ShellHandlers::ShellGetVersion(
@@ -437,6 +445,92 @@ bridge::DiagnosticsGetMetricsResult ShellHandlers::DiagnosticsGetMetrics(
   result.eventsPosted = events.posted;
   result.eventsDelivered = events.delivered;
   result.eventsCoalesced = events.coalesced;
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// agent -- ADR 0016
+// ---------------------------------------------------------------------------
+//
+// Three methods and almost no logic: the catalogue, the refusals and the waiting are all in
+// sonora::agent, which has no CEF in it and a test file of its own. What is left here is
+// turning one set of structs into another, which is the right amount of code to have in the
+// layer that cannot be unit tested.
+
+namespace {
+
+bridge::AgentStep ToBridge(const agent::Step& step) {
+  bridge::AgentStep out;
+  out.tool = step.tool;
+  out.effect = std::string(agent::Describe(step.effect));
+  out.argumentsJson = step.arguments_json;
+  out.resultJson = step.result_json;
+  return out;
+}
+
+void CopySteps(const std::vector<agent::Step>& steps, std::vector<bridge::AgentStep>& into) {
+  into.reserve(steps.size());
+  for (const agent::Step& step : steps) {
+    into.push_back(ToBridge(step));
+  }
+}
+
+// Empty when nothing was refused. The page shows this string, so it is the broker's own words
+// rather than an error code the page would have to have a table for.
+std::string RefusalText(const agent::Outcome& outcome) {
+  if (!outcome.refused()) {
+    return {};
+  }
+  std::string text(agent::Describe(outcome.refusal));
+  if (!outcome.refused_argument.empty()) {
+    text += ": " + outcome.refused_argument;
+  }
+  return text;
+}
+
+}  // namespace
+
+bridge::AgentDescribeToolsResult ShellHandlers::AgentDescribeTools(
+    const bridge::AgentDescribeToolsParams& params) {
+  (void)params;
+
+  const agent::Broker& broker = RequireAgent().broker();
+  bridge::AgentDescribeToolsResult result;
+  result.planner = broker.planner_description();
+  for (const agent::Tool& tool : broker.catalogue().tools()) {
+    bridge::AgentTool described;
+    described.name = tool.name;
+    described.effect = std::string(agent::Describe(tool.effect));
+    described.description = tool.description;
+    described.parametersJson = std::string(tool.parameters_json);
+    result.tools.push_back(std::move(described));
+  }
+  return result;
+}
+
+bridge::AgentInterpretResult ShellHandlers::AgentInterpret(
+    const bridge::AgentInterpretParams& params) {
+  const agent::Outcome outcome = RequireAgent().broker().Interpret(params.utterance);
+
+  bridge::AgentInterpretResult result;
+  result.understood = outcome.understood;
+  result.reply = outcome.reply;
+  result.planId = outcome.plan_id;
+  result.refusal = RefusalText(outcome);
+  result.refusedTool = outcome.refused_tool;
+  CopySteps(outcome.performed, result.performed);
+  CopySteps(outcome.pending, result.pending);
+  return result;
+}
+
+bridge::AgentResolveResult ShellHandlers::AgentResolve(
+    const bridge::AgentResolveParams& params) {
+  const agent::Outcome outcome = RequireAgent().broker().Resolve(params.planId, params.accept);
+
+  bridge::AgentResolveResult result;
+  result.reply = outcome.reply;
+  result.refusal = RefusalText(outcome);
+  CopySteps(outcome.performed, result.performed);
   return result;
 }
 

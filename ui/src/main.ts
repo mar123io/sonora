@@ -1,5 +1,6 @@
 import './style.css';
 
+import { AgentPanel } from './agent';
 import { CapabilitySet } from './bridge/capabilities';
 import { onEvent } from './bridge/events';
 import { BridgeError, sonora } from './bridge/invoke';
@@ -259,6 +260,13 @@ async function main(): Promise<void> {
   onEvent('player.state', (payload) => queue.observe(payload.player));
   onEvent('library.status', (payload) => library.onStatus(payload.library));
   void queue.refresh();
+
+  // Last, and after the queue: a plan that the person accepts changes what is playing, and
+  // the panel says so by asking the queue to catch up rather than by knowing anything about
+  // it. It removes itself when the capability is off.
+  void new AgentPanel(root('#agent-panel'), async () => {
+    await queue.refresh();
+  }).mount(capabilities);
 
   await checkVersion();
   await checkRoundTrip();

@@ -63,6 +63,10 @@ class StubHandlers : public bridge::BridgeHandlers {
 
   SONORA_STUB_METHOD(DiagnosticsGetMetrics)
 
+  SONORA_STUB_METHOD(AgentDescribeTools)
+  SONORA_STUB_METHOD(AgentInterpret)
+  SONORA_STUB_METHOD(AgentResolve)
+
 #undef SONORA_STUB_METHOD
 };
 

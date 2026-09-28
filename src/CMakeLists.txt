@@ -15,6 +15,10 @@ add_subdirectory(update)
 # in this project, which is what makes the rule that decides a regression
 # testable -- see ADR 0013.
 add_subdirectory(bench)
+# What an agent may ask for, and the broker that refuses the rest. Portable and free of
+# CEF, a network and a model, which is what makes the permission model in ADR 0016 a set
+# of unit tests rather than a paragraph.
+add_subdirectory(agent)
 add_subdirectory(platform)
 
 # The updater is a separate executable on purpose -- see src/updater/CMakeLists.txt.

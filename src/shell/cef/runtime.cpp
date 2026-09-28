@@ -13,6 +13,7 @@
 #include <sonora/bridge/capabilities.h>
 #include <sonora/library/library.h>
 
+#include "cef/agent_host.h"
 #include "cef/app.h"
 #include "cef/client.h"
 #include "cef/crash_keys.h"
@@ -43,6 +44,9 @@ std::unique_ptr<LibraryHost> g_library;
 std::unique_ptr<ShellMediaSession> g_media;
 std::unique_ptr<DesktopIntegration> g_desktop;
 std::unique_ptr<ShellHandlers> g_handlers;
+// After the handlers, because it dispatches into them. Declared here so it is destroyed
+// before them, which is the order the reference inside it needs.
+std::unique_ptr<AgentHost> g_agent;
 CefRefPtr<ShellTimer> g_heartbeat;
 CefRefPtr<ShellTimer> g_simulated_crash;
 bool g_initialized = false;
@@ -189,6 +193,18 @@ bool StartCef(const RuntimeConfig& config) {
   g_handlers = std::make_unique<ShellHandlers>(*g_capabilities, *g_metrics, *g_events,
                                                *g_player, *g_library);
 
+  // The one cycle in this graph, and it is broken by construction order rather than by a
+  // weak reference: the agent needs the handlers to dispatch into, and the handlers need the
+  // agent to answer three methods. So the handlers are built without it and handed it after,
+  // and until that line runs those three methods report kUnavailable -- which is also what a
+  // build with the capability switched off does, so the page has one degraded path and not
+  // two.
+  g_agent = std::make_unique<AgentHost>(*g_handlers, *g_capabilities);
+  g_handlers->SetAgent(g_agent.get());
+  std::printf("agent: %s, %zu tool(s) offered\n",
+              g_agent->broker().planner_description().c_str(),
+              g_agent->broker().catalogue().size());
+
   options.library = g_library.get();
   options.bridge_handlers = g_handlers.get();
   options.capabilities = g_capabilities.get();
@@ -206,6 +222,11 @@ bool StartCef(const RuntimeConfig& config) {
 
   if (!CefInitialize(MakeMainArgs(), settings, g_app, nullptr)) {
     g_app = nullptr;
+    // The agent first, and the pointer back to it cleared with it: it holds a reference to
+    // the handlers, and the handlers hold a raw pointer to it. One cycle, unwound by hand in
+    // both of the two places that unwind it.
+    g_handlers->SetAgent(nullptr);
+    g_agent.reset();
     g_handlers.reset();
     return false;
   }
@@ -349,6 +370,10 @@ void StopCef() {
   platform::SetWorkCallback(nullptr);
   g_app = nullptr;
   CefShutdown();
+  if (g_handlers) {
+    g_handlers->SetAgent(nullptr);
+  }
+  g_agent.reset();
   g_handlers.reset();
   g_desktop.reset();
   g_media.reset();

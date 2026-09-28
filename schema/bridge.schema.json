@@ -23,6 +23,24 @@
   "protocolVersion": 1,
 
   "types": {
+    "AgentTool": {
+      "summary": "One method as an agent is told about it. Generated from that method's \"agent\" block.",
+      "fields": [
+        { "name": "name", "type": "string", "summary": "The bridge's own wire name, so a plan is readable against the rest of this schema." },
+        { "name": "effect", "type": "string", "summary": "\"read\" runs on sight; \"confirm\" is proposed and waits for the person." },
+        { "name": "description", "type": "string", "summary": "Written for a planner, not for whoever maintains the bridge." },
+        { "name": "parametersJson", "type": "string", "summary": "JSON Schema for the arguments, as text -- JSON Schema is not expressible in this type system, and pretending otherwise would mean a second description to keep in step." }
+      ]
+    },
+    "AgentStep": {
+      "summary": "One tool call, either done or waiting.",
+      "fields": [
+        { "name": "tool", "type": "string", "summary": "The wire name." },
+        { "name": "effect", "type": "string", "summary": "\"read\" or \"confirm\"." },
+        { "name": "argumentsJson", "type": "string", "summary": "The arguments as the planner proposed them and the broker accepted them, as text. Shown to the person, because a plan whose arguments are hidden is not a plan somebody can agree to." },
+        { "name": "resultJson", "type": "string", "summary": "Empty for a step that has not run." }
+      ]
+    },
     "PlayerState": {
       "summary": "Everything the interface needs to draw the transport, in one object.",
       "fields": [
@@ -152,6 +170,10 @@
         {
           "name": "getState",
           "summary": "The whole transport state. Sent as an event too; this is for the first paint, before any event has arrived.",
+          "agent": {
+            "effect": "read",
+            "summary": "What is playing, whether it is paused, the position and volume."
+          },
           "params": [],
           "result": [
             { "name": "player", "type": "PlayerState", "summary": "The current state." }
@@ -160,6 +182,10 @@
         {
           "name": "enqueue",
           "summary": "Adds library tracks to the queue, in the order given. A list rather than one id because queueing an album is one call, not fifty; and ids rather than paths because a path from the renderer is a boundary somebody has to defend, while an id is either in the index or it is not.",
+          "agent": {
+            "effect": "confirm",
+            "summary": "Add tracks to the play queue by their library id, in order. Set replace to start a new queue instead of appending."
+          },
           "params": [
             { "name": "trackIds", "type": "int", "array": true, "summary": "Library ids. An id the index does not know is an error, and none of the list is queued." },
             { "name": "replace", "type": "bool", "optional": true, "summary": "Clears the queue first. Defaults to false." }
@@ -171,6 +197,10 @@
         {
           "name": "getQueue",
           "summary": "What is in the queue, resolved through the library. Not an event: the queue changes when the page changes it, and player.state already says when its size or position moved -- which is when a page that cares should ask again.",
+          "agent": {
+            "effect": "read",
+            "summary": "The tracks queued to play, in order."
+          },
           "params": [],
           "result": [
             { "name": "entries", "type": "QueueEntry", "array": true, "summary": "In play order." }
@@ -185,36 +215,60 @@
         {
           "name": "play",
           "summary": "Starts, or resumes after a pause. Starting from idle plays the head of the queue.",
+          "agent": {
+            "effect": "confirm",
+            "summary": "Start or resume playback of whatever is queued."
+          },
           "params": [],
           "result": []
         },
         {
           "name": "pause",
           "summary": "Fades out over about twenty milliseconds and then stops consuming. Instant, and not a click.",
+          "agent": {
+            "effect": "confirm",
+            "summary": "Pause playback, keeping the position."
+          },
           "params": [],
           "result": []
         },
         {
           "name": "stop",
           "summary": "Lets go of the current track. The queue survives.",
+          "agent": {
+            "effect": "confirm",
+            "summary": "Stop playback and let go of the current track."
+          },
           "params": [],
           "result": []
         },
         {
           "name": "next",
           "summary": "Skips to the next track. Not the same as a gapless join: this one is meant to be heard.",
+          "agent": {
+            "effect": "confirm",
+            "summary": "Skip to the next track in the queue."
+          },
           "params": [],
           "result": []
         },
         {
           "name": "previous",
           "summary": "Restarts the current track when more than three seconds have played, and goes back one otherwise.",
+          "agent": {
+            "effect": "confirm",
+            "summary": "Go back to the previous track in the queue."
+          },
           "params": [],
           "result": []
         },
         {
           "name": "jumpTo",
           "summary": "Plays the queue entry at this position. Absolute, unlike next and previous, so it also starts playback when nothing is playing -- which is what clicking a row of the queue has to do. An index the queue does not have is ignored rather than refused: the queue can change between the page drawing a row and somebody clicking it.",
+          "agent": {
+            "effect": "confirm",
+            "summary": "Play the queue entry at this index, counting from zero."
+          },
           "params": [
             { "name": "index", "type": "int", "summary": "Position in the queue, from 0." }
           ],
@@ -223,6 +277,10 @@
         {
           "name": "seek",
           "summary": "Moves to a position in the current track.",
+          "agent": {
+            "effect": "confirm",
+            "summary": "Move to this position, in milliseconds, within the current track."
+          },
           "params": [
             { "name": "positionMs", "type": "int", "summary": "Milliseconds from the start." }
           ],
@@ -231,6 +289,10 @@
         {
           "name": "setVolume",
           "summary": "Linear gain, clamped to 0..1, applied as a ramp so it cannot click.",
+          "agent": {
+            "effect": "confirm",
+            "summary": "Set the output volume, from 0.0 to 1.0."
+          },
           "params": [
             { "name": "level", "type": "double", "summary": "0 is silence, 1 is unchanged." }
           ],
@@ -256,6 +318,10 @@
         {
           "name": "getStatus",
           "summary": "What the library has and whether it is scanning. The first call a page makes into this capability: an empty index and a scan in flight look the same from a track count alone.",
+          "agent": {
+            "effect": "read",
+            "summary": "How many tracks are indexed, and whether a scan is running now."
+          },
           "params": [],
           "result": [
             { "name": "library", "type": "LibraryStatus", "summary": "The current status." }
@@ -275,6 +341,10 @@
         {
           "name": "listTracks",
           "summary": "A page of every track, in album order. Paged because the page draws a window of rows, not a whole library, and a call that returns fifty thousand records to display forty of them is a call that stutters.",
+          "agent": {
+            "effect": "read",
+            "summary": "A window of the library in album order. Use limit and offset to page; prefer search when looking for something specific."
+          },
           "params": [
             { "name": "limit", "type": "int", "optional": true, "summary": "How many rows. Defaults to 500, maximum 5000." },
             { "name": "offset", "type": "int", "optional": true, "summary": "Where to start. Defaults to 0." }
@@ -287,6 +357,10 @@
         {
           "name": "listAlbums",
           "summary": "Every album, ordered by album artist. A grouping, computed on the spot.",
+          "agent": {
+            "effect": "read",
+            "summary": "Every album in the library, with its artist and year."
+          },
           "params": [],
           "result": [
             { "name": "albums", "type": "LibraryAlbum", "array": true, "summary": "All of them." }
@@ -295,6 +369,10 @@
         {
           "name": "listArtists",
           "summary": "Every distinct track artist, in order.",
+          "agent": {
+            "effect": "read",
+            "summary": "Every artist name in the library."
+          },
           "params": [],
           "result": [
             { "name": "artists", "type": "string", "array": true, "summary": "All of them." }
@@ -303,6 +381,10 @@
         {
           "name": "albumTracks",
           "summary": "The tracks of one album, in disc and track order. Both parts of the identity are needed: two different artists can have an album called Greatest Hits, and they are not one album.",
+          "agent": {
+            "effect": "read",
+            "summary": "The tracks of one album, in play order."
+          },
           "params": [
             { "name": "album", "type": "string", "summary": "Album name, exactly as listAlbums gave it." },
             { "name": "albumArtist", "type": "string", "summary": "Album artist, exactly as listAlbums gave it." }
@@ -314,6 +396,10 @@
         {
           "name": "artistTracks",
           "summary": "Everything by one artist, grouped by album.",
+          "agent": {
+            "effect": "read",
+            "summary": "Everything by one artist, in album order."
+          },
           "params": [
             { "name": "artist", "type": "string", "summary": "Artist name, exactly as listArtists gave it." }
           ],
@@ -324,6 +410,10 @@
         {
           "name": "search",
           "summary": "Full-text search over titles, artists and albums, best match first, with the last word treated as a prefix so the list narrows while somebody is still typing. Whatever is in the box is text: no part of it is syntax, however it is spelled.",
+          "agent": {
+            "effect": "read",
+            "summary": "Find tracks by words from the title, artist or album. Ranked, best match first. Plain words only: nothing in the query is treated as syntax."
+          },
           "params": [
             { "name": "query", "type": "string", "summary": "What the person typed. An empty or punctuation-only query returns nothing rather than everything." },
             { "name": "limit", "type": "int", "optional": true, "summary": "Defaults to 200, maximum 5000." }
@@ -370,6 +460,51 @@
           "payload": [
             { "name": "sequence", "type": "int", "summary": "Increments once per emission, including the ones that never arrive. Gaps are the coalescing, visible from the page." },
             { "name": "uptimeMs", "type": "int", "summary": "Milliseconds since the shell finished starting." }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "agent",
+      "version": 1,
+      "summary": "A sentence in, and a plan of tool calls out -- validated against the list in this same schema before any of it happens. The capability exists so that a page can offer the panel only when the shell has it, and so that switching it off removes the whole feature rather than leaving a text box that fails. See ADR 0016.",
+      "methods": [
+        {
+          "name": "describeTools",
+          "summary": "The tools this build offers an agent, as the planner is told about them: a name, an effect class, a description written for a planner, and JSON Schema for the arguments. Generated from the \"agent\" blocks in this file, filtered by what negotiation left enabled -- so a page showing this list is showing what the broker would actually accept.",
+          "params": [],
+          "result": [
+            { "name": "planner", "type": "string", "summary": "What is doing the interpreting: \"local patterns\" for the planner that ships, or a provider and model for one that does not." },
+            { "name": "tools", "type": "AgentTool", "array": true, "summary": "In schema order." }
+          ]
+        },
+        {
+          "name": "interpret",
+          "summary": "Reads one sentence and answers with what it would do. Reads may already have happened by the time this returns -- they are the cheap half and they cannot change anything. Anything that can is in `pending` with a `planId`, and has not run.",
+          "params": [
+            { "name": "utterance", "type": "string", "summary": "What the person typed. Longer than two kilobytes is refused before the planner sees it." }
+          ],
+          "result": [
+            { "name": "understood", "type": "bool", "summary": "False when the planner did not know what was meant, which is an answer and not an error." },
+            { "name": "reply", "type": "string", "summary": "One sentence for the person, from the planner." },
+            { "name": "planId", "type": "string", "summary": "Empty unless something is waiting. Pass it to resolve." },
+            { "name": "performed", "type": "AgentStep", "array": true, "summary": "The reads that already ran, with their results." },
+            { "name": "pending", "type": "AgentStep", "array": true, "summary": "What will run if the person accepts. Nothing here has happened." },
+            { "name": "refusal", "type": "string", "summary": "Empty when nothing was refused. Otherwise why the broker would not carry the plan out -- shown to the person, because a planner asking for something it may not have is the most interesting thing this system reports about itself." },
+            { "name": "refusedTool", "type": "string", "summary": "The tool that was refused, when one was." }
+          ]
+        },
+        {
+          "name": "resolve",
+          "summary": "Accepts or discards a plan this shell issued. An id it did not issue, or one already answered, is refused rather than ignored: a confirmation that quietly does nothing is indistinguishable from one that worked.",
+          "params": [
+            { "name": "planId", "type": "string", "summary": "From interpret." },
+            { "name": "accept", "type": "bool", "summary": "False discards it and does nothing." }
+          ],
+          "result": [
+            { "name": "reply", "type": "string", "summary": "One sentence for the person." },
+            { "name": "performed", "type": "AgentStep", "array": true, "summary": "What actually ran." },
+            { "name": "refusal", "type": "string", "summary": "Empty unless the plan was refused on the way out -- which happens when a capability was switched off between the proposal and the acceptance." }
           ]
         }
       ]

@@ -9,6 +9,7 @@ include(CefTargets)
 # sonora_cef: the CEF integration, shared by the application and the helper
 # ---------------------------------------------------------------------------
 add_library(sonora_cef STATIC
+  cef/agent_host.cpp
   cef/app.cpp
   cef/bridge_router.cpp
   cef/client.cpp
@@ -39,6 +40,9 @@ sonora_target_external_include(sonora_cef PUBLIC "${CEF_ROOT}")
 # targets. CEF_STANDARD_LIBS is the platform's own set (comctl32, shlwapi,
 # ws2_32 and friends) that libcef.dll expects the host to link.
 target_link_libraries(sonora_cef PUBLIC
+  # What an agent may ask for, and the broker that refuses the rest. No CEF in it and no
+  # model either -- see ADR 0016 and src/agent/CMakeLists.txt.
+  sonora::agent
   sonora::assets
   sonora::audio
   sonora::bridge

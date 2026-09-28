@@ -6,9 +6,36 @@
 
 include_guard(GLOBAL)
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
+# Inside the functions, and not once at the top of this file, and that is not a style
+# preference -- it is a bug that shipped.
+#
+# find_package(Python3) sets Python3_EXECUTABLE in the scope that calls it, and this file has
+# include_guard(GLOBAL) on it. src/bridge includes it first, so the body ran there; when
+# src/agent included it afterwards the guard skipped the body, Python3_EXECUTABLE was empty in
+# that directory, and the custom command became:
+#
+#     COMMAND "" "tools/gen_bridge.py" --schema ...
+#
+# A command whose program is the empty string. MSBuild ran nothing, reported success, wrote no
+# output and printed not one line -- which is why the first symptom was MSB8065 saying the rule
+# had succeeded without creating its output, and the second was the compiler being handed a
+# file that did not exist.
+#
+# So each function finds it for itself. The results are cached, so asking twice costs nothing,
+# and the assertion below is there because a build step that runs the empty program must not be
+# able to look like one that worked.
+macro(sonora_require_python)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  if(NOT Python3_EXECUTABLE)
+    message(FATAL_ERROR
+            "Python3_EXECUTABLE is empty in ${CMAKE_CURRENT_LIST_DIR}. A generated file is "
+            "about to be produced by a command with no program in it, which succeeds silently "
+            "-- see the note above sonora_require_python.")
+  endif()
+endmacro()
 
 function(sonora_generate_bridge header_var source_var)
+  sonora_require_python()
   set(generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
   set(header "${generated_dir}/bridge_generated.h")
   set(source "${generated_dir}/bridge_generated.cpp")
@@ -30,5 +57,41 @@ function(sonora_generate_bridge header_var source_var)
     VERBATIM)
 
   set(${header_var} "${header}" PARENT_SCOPE)
+  set(${source_var} "${source}" PARENT_SCOPE)
+endfunction()
+
+
+# And the agent's view of the same schema: the table the broker validates against.
+#
+# A second function rather than two more outputs on the first, because they have different
+# owners -- the table belongs to sonora_agent and the bridge must not depend on it.
+#
+# One output, and the first version of this had two: it also generated the catalogue as JSON,
+# which nothing in the build read. Listing an output no target compiles meant marking it
+# HEADER_FILE_ONLY to keep the compiler off it, and MSBuild answered by running the rule,
+# reporting success and writing neither file:
+#
+#   warning MSB8065: custom build for ... succeeded, but the specified output
+#   ...\agent_tools_generated.cpp was not created
+#
+# The JSON is still worth having -- `gen_bridge.py --agent-json <file>` writes it, which is how
+# the diagram and the manifest are produced too -- but it is not part of anybody's build, and
+# the page gets the catalogue from agent.describeTools() rather than from a file.
+function(sonora_generate_agent_tools source_var)
+  sonora_require_python()
+
+  set(source "${CMAKE_CURRENT_BINARY_DIR}/generated/agent_tools_generated.cpp")
+  set(schema "${CMAKE_SOURCE_DIR}/schema/bridge.schema.json")
+  set(script "${CMAKE_SOURCE_DIR}/tools/gen_bridge.py")
+
+  add_custom_command(
+    OUTPUT "${source}"
+    COMMAND "${Python3_EXECUTABLE}" "${script}"
+            --schema "${schema}"
+            --agent-cpp "${source}"
+    DEPENDS "${script}" "${schema}"
+    COMMENT "Generating the agent tool catalogue from schema/bridge.schema.json"
+    VERBATIM)
+
   set(${source_var} "${source}" PARENT_SCOPE)
 endfunction()

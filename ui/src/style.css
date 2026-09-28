@@ -556,3 +556,157 @@ input[type="range"] {
 #diagnostics dd[data-state="pending"] {
   color: var(--muted);
 }
+
+/* ------------------------------------------------------------------------- */
+/* The agent panel -- ADR 0016                                               */
+/*                                                                           */
+/* Above the transport and below the diagnostics, on the same right-hand      */
+/* column: it is a thing you open, use and stop using, not part of the        */
+/* furniture. Wider than the diagnostics because a plan's arguments are the   */
+/* point and wrapping them defeats it.                                       */
+
+#agent-panel {
+  position: fixed;
+  right: 12px;
+  bottom: 146px;
+  width: min(460px, calc(100vw - 24px));
+  max-height: 46vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.agent-ask {
+  display: flex;
+  gap: 8px;
+}
+
+.agent-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.agent-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.agent-send,
+.agent-accept,
+.agent-decline {
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* The one button that changes something the person can hear is the one that looks
+   like a decision. */
+.agent-accept {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.agent-reply {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.agent-steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+}
+
+.agent-step {
+  overflow-wrap: anywhere;
+}
+
+/* A step that has not happened is dimmer than one that has, so the difference is
+   visible without reading the note next to it. */
+.agent-step-waiting {
+  color: var(--muted);
+}
+
+.agent-step-tool {
+  color: var(--fg);
+}
+
+.agent-step-args {
+  color: var(--muted);
+  margin-left: 6px;
+}
+
+.agent-step-note {
+  margin-left: 6px;
+  color: var(--warn);
+}
+
+.agent-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* A refusal is not an error to tuck away: it is the most interesting thing this
+   panel can report, so it is the loudest thing in it. */
+.agent-refusal {
+  margin: 0;
+  color: var(--bad);
+}
+
+.agent-tools {
+  margin-top: 10px;
+  color: var(--muted);
+}
+
+.agent-tools summary {
+  cursor: pointer;
+}
+
+.agent-tool-table {
+  margin-top: 6px;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.agent-tool-table td {
+  padding: 2px 6px 2px 0;
+  vertical-align: top;
+}
+
+.agent-tool-name {
+  color: var(--fg);
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.agent-effect {
+  white-space: nowrap;
+}
+
+.agent-effect-read {
+  color: var(--ok);
+}
+
+.agent-effect-confirm {
+  color: var(--warn);
+}
+
+.agent-note {
+  margin: 8px 0 0;
+}

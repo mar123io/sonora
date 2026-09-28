@@ -1,6 +1,7 @@
 find_package(Catch2 3 REQUIRED)
 
 add_executable(sonora_tests
+  test_agent.cpp
   test_playback_state.cpp
   test_asset_store.cpp
   test_bench_measure.cpp
@@ -28,6 +29,7 @@ add_executable(sonora_tests
 target_include_directories(sonora_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
 
 target_link_libraries(sonora_tests PRIVATE
+  sonora::agent
   sonora::core
   sonora::assets
   sonora::audio
