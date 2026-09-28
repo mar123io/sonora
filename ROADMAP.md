@@ -471,14 +471,30 @@ Se sei **in anticipo**, in coda c'è la Fase 6.
 La job description cita esplicitamente "AI agent integrations within the Spotify Desktop
 experience". Se hai tempo dopo la settimana 13:
 
-- [ ] Esponi un sottoinsieme del bridge come **tool schema** (nomi, parametri JSON Schema,
+- [x] Esponi un sottoinsieme del bridge come **tool schema** (nomi, parametri JSON Schema,
       descrizioni) generato dallo stesso `bridge.schema.json`
-- [ ] Un pannello in cui scrivi "metti qualcosa di tranquillo per lavorare" e l'agent chiama
+      — 18 metodi su 27, esposti da un blocco `agent` accanto al metodo. Il generatore emette
+      il catalogo JSON *e* la tabella C++ contro cui il broker valida, così descrizione e
+      applicazione non possono divergere.
+- [x] Un pannello in cui scrivi "metti qualcosa di tranquillo per lavorare" e l'agent chiama
       `library.search` + `player.enqueue`
-- [ ] **Il punto interessante non è l'LLM, è il modello di permessi:** quali tool può invocare
+      — con una differenza che è il punto: il planner locale **non capisce gli stati d'animo**
+      e lo dice invece di fingere. Cerca la parola, e l'interfaccia `Planner` è dove si innesta
+      qualcosa che capisca il resto.
+- [x] **Il punto interessante non è l'LLM, è il modello di permessi:** quali tool può invocare
       il layer web, come si autorizzano le azioni distruttive (svuota coda, elimina playlist),
       come impedisci che contenuto della pagina diventi istruzione. Scrivi un ADR su questo.
-      È esattamente la conversazione che avresti in quel team.
+      — **ADR 0016**. `player.clearQueue` e `library.scan` non sono nascosti per prudenza: sono
+      assenti dalla sola lista che il broker consulta. Le mutazioni si propongono e aspettano
+      una persona. E l'iniezione ha un test in cui il planner **cade** volutamente nel tranello
+      di un titolo di traccia: la difesa non è che il modello resista.
+
+**Completato quando:** il modello di permessi regge un planner che fa quello che il titolo di
+una traccia gli dice.
+
+**Non fatto, e scritto:** nessun provider vero è collegato. `Planner` è due funzioni virtuali,
+e cosa deve fare in più un adapter reale — marcare il testo della libreria come non fidato — è
+in fondo all'ADR 0016 invece di essere lasciato da indovinare.
 
 ---
 

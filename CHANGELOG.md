@@ -6,6 +6,29 @@ a tag like `v0.9-delivery` is a milestone and not a release.
 
 ---
 
+## Unreleased
+
+Phase 6 of the roadmap, which the job description asked for by name: *"AI agent integrations
+within the Spotify Desktop experience"*.
+
+- **An agent gets a list, not a bridge.** 18 of the bridge's 27 methods are offered to an agent,
+  by a line in the schema next to the method; the other 9 are absent from the only list the
+  broker checks a plan against rather than hidden from the planner. 9 run on sight, 9 are
+  proposed and wait for a person. The catalogue a planner is told about and the table the broker
+  validates against are generated from the same block, so they cannot disagree.
+- **The planner has no authority.** Every proposed call is validated against the catalogue and
+  the parameter list, and a plan is admitted whole or not at all. A test drives a planner that
+  deliberately obeys an instruction hidden in a track title, and the call is refused before
+  anything is offered to anybody — because the tool is not on the list, not because the model
+  resisted.
+- **No provider is wired up**, and the interface is the deliverable. The planner that ships
+  matches words and says so rather than pretending to understand a mood. ADR 0016 has the
+  reasoning, what a real adapter must additionally do, and what the plan id is and is not.
+- `src/agent/` has no CEF, no operating system, no network and no model in it, so every rule
+  above is a unit test on all three platforms.
+
+---
+
 ## 1.0.0
 
 The first release meant for somebody else's computer. Thirteen weeks, and the point of it was
