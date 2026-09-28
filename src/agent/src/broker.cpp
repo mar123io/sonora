@@ -62,9 +62,16 @@ Outcome Broker::Interpret(std::string_view utterance) {
       // reads something and then has nothing further to say turns a successful answer into
       // "I did not understand" -- which is what the first version of this did, and what its
       // test caught.
+      //
+      // The reply is the exception, and that took a person typing a sentence to find: the
+      // first round says what it is about to do and the last one says how it went, so keeping
+      // the earlier text left "Searching your library for ..." on screen for ever while the
+      // answer -- "I did not find anything" -- was thrown away. The later word wins.
+      if (!plan.reply.empty()) {
+        outcome.reply = plan.reply;
+      }
       if (outcome.performed.empty()) {
         outcome.understood = plan.understood;
-        outcome.reply = plan.reply;
       }
       return outcome;
     }

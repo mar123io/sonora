@@ -514,6 +514,55 @@ TEST_CASE("the local planner takes ids out of a search and nothing else", "[agen
   CHECK(plan.calls[0].arguments_json.find("stop everything") == std::string::npos);
 }
 
+// Both of these came from somebody typing a sentence into the panel. Neither could have come
+// from the tests above, which is the argument for having done it.
+TEST_CASE("the words in the request are not all words in the library", "[agent][planner]") {
+  const Catalogue catalogue = Catalogue::ForEnabled(Everything());
+  LocalPlanner planner;
+
+  const auto query = [&](std::string utterance) {
+    Request request;
+    request.utterance = std::move(utterance);
+    request.catalogue = &catalogue;
+    const Plan plan = planner.Propose(request);
+    REQUIRE(plan.calls.size() == 1);
+    REQUIRE(plan.calls.front().tool == "library.search");
+    return nlohmann::json::parse(plan.calls.front().arguments_json)
+        .at("query")
+        .get<std::string>();
+  };
+
+  // "play some bastille" searched for "some bastille" and found nothing, because the index is
+  // full-text and no title contains "some".
+  CHECK(query("play some bastille") == "bastille");
+  CHECK(query("play the beatles") == "beatles");
+  CHECK(query("metti un po di bastille") == "po di bastille");  // "po" is not on the list
+  CHECK(query("metti della musica") == "musica");
+  CHECK(query("play some of the bastille") == "of the bastille");
+
+  // The last word is never dropped, whatever it is, and that rule has a name: The The are a
+  // band. It is also why "play something" is not turned into an empty search --
+  CHECK(query("play the the") == "the");
+  CHECK(query("play bastille") == "bastille");
+  CHECK(query("play something") == "something");
+}
+
+TEST_CASE("asked to choose, a word matcher says what it found rather than choosing",
+          "[agent][planner]") {
+  // -- and this is what that costs. "play something" is a request for a choice, which is the
+  // one thing this planner cannot make; it searches for the word, finds nothing, and says so.
+  // Not a good answer. An honest one, and the reply names what would give a better one.
+  Spy spy;
+  spy.canned = R"({"tracks":[]})";
+  Broker broker(Catalogue::ForEnabled(Everything()), std::make_unique<LocalPlanner>(),
+                spy.Function());
+
+  const Outcome outcome = broker.Interpret("play something");
+  CHECK(outcome.performed.size() == 1);
+  CHECK(outcome.reply.find("did not find") != std::string::npos);
+  CHECK_FALSE(outcome.waiting());
+}
+
 TEST_CASE("a search that found nothing is not a queue of nothing", "[agent][planner]") {
   const Catalogue catalogue = Catalogue::ForEnabled(Everything());
   LocalPlanner planner;
@@ -524,8 +573,29 @@ TEST_CASE("a search that found nothing is not a queue of nothing", "[agent][plan
   second.observations.push_back(Observation{"library.search", R"({"tracks":[]})"});
 
   const Plan plan = planner.Propose(second);
-  CHECK_FALSE(plan.understood);
+  // Understood, and the answer is nothing. The question was read correctly; the library does
+  // not have it.
+  CHECK(plan.understood);
   CHECK(plan.calls.empty());
+  CHECK(plan.reply.find("did not find") != std::string::npos);
+}
+
+TEST_CASE("the answer replaces the intention, and does not sit behind it", "[agent][broker]") {
+  // What the panel showed: "Searching your library for ..." and then silence for ever, because
+  // the first round's reply was kept and the second round's -- the actual answer -- was
+  // dropped. A round may not retract an outcome; it may certainly report one.
+  Spy spy;
+  spy.canned = R"({"tracks":[]})";
+  Broker broker(Catalogue::ForEnabled(Everything()), std::make_unique<LocalPlanner>(),
+                spy.Function());
+
+  const Outcome outcome = broker.Interpret("play some bastille");
+
+  CHECK(spy.called.size() == 1);
+  CHECK(outcome.performed.size() == 1);
+  CHECK_FALSE(outcome.waiting());
+  CHECK(outcome.reply.find("did not find") != std::string::npos);
+  CHECK(outcome.reply.find("Searching") == std::string::npos);
 }
 
 TEST_CASE("the local planner end to end proposes a queue and waits", "[agent][planner]") {

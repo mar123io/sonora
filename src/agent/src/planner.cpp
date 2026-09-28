@@ -22,8 +22,23 @@ bool Mentions(const std::string& lowered, std::string_view word) {
   return lowered.find(word) != std::string::npos;
 }
 
+// Words that are in the sentence and not in the library.
+//
+// "play some bastille" searched for "some bastille", found nothing, and looked from the outside
+// like the whole feature was broken. It was not: the index is full-text, "some" is in no title,
+// and a search for every word in the request finds the intersection of all of them.
+//
+// This is the price of a planner that matches words. It is a list, it is incomplete, and the
+// next person to type a filler word this does not know will get the same silence -- which is
+// the argument for the interface in planner.h rather than for a longer list.
+constexpr std::array<std::string_view, 14> kFiller{{
+    "a", "an", "the", "some", "any", "me", "us",         // English
+    "un", "uno", "una", "del", "della", "dei", "delle",  // Italian
+}};
+
 // The subject of a sentence, for the small number of shapes this planner claims to read:
-// whatever follows the verb. Returns empty when there is nothing after it.
+// whatever follows the verb, with the filler taken off the front. Returns empty when nothing
+// is left, which is the honest answer to "play something".
 std::string After(const std::string& lowered, std::string_view verb) {
   const std::size_t at = lowered.find(verb);
   if (at == std::string::npos) {
@@ -39,6 +54,21 @@ std::string After(const std::string& lowered, std::string_view verb) {
          (std::isspace(static_cast<unsigned char>(subject.back())) != 0 ||
           subject.back() == '.' || subject.back() == '?' || subject.back() == '!')) {
     subject.pop_back();
+  }
+
+  // Leading filler, one word at a time: "play some of the bastille" loses three.
+  bool dropped = true;
+  while (dropped) {
+    dropped = false;
+    const std::size_t space = subject.find(' ');
+    if (space == std::string::npos) {
+      break;  // one word left, and it is the one being looked for even if it is "the"
+    }
+    const std::string_view first(subject.data(), space);
+    if (std::find(kFiller.begin(), kFiller.end(), first) != kFiller.end()) {
+      subject.erase(0, space + 1);
+      dropped = true;
+    }
   }
   return subject;
 }
@@ -142,7 +172,12 @@ Plan LocalPlanner::Propose(const Request& request) {
   if (!request.observations.empty()) {
     const std::vector<std::int64_t> ids = TrackIds(request.observations, kMaxQueued);
     if (ids.empty()) {
-      return Unknown("I did not find anything in your library for that.");
+      // Understood, and the answer is nothing. Not the same as not having understood: the
+      // search ran, it was the right search, and the library does not have it.
+      Plan empty;
+      empty.understood = true;
+      empty.reply = "I did not find anything in your library for that.";
+      return empty;
     }
     Plan plan;
     plan.understood = true;
