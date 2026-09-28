@@ -43,7 +43,9 @@ env:
 
 jobs:
   format:
-    name: clang-format
+    # Two checks that compile nothing and both fail on something a build cannot see: a file
+    # formatted differently from the rest, and a link to a file this repository does not have.
+    name: format and links
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +60,14 @@ jobs:
           mapfile -t files < <(find src tests tools -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' \))
           printf 'checking %d files\n' "${#files[@]}"
           clang-format --dry-run --Werror "${files[@]}"
+
+      # Against `git ls-files`, and that is the whole point of it: docs/adr/0016 was written,
+      # referenced from the README and from three commit messages, and never added. Every check
+      # that ran resolved links against the working tree, where the file was sitting untracked,
+      # so every check passed -- and the file was missing for everybody who clones. A CI runner
+      # only ever has what git has, which is why this belongs here and not on a laptop.
+      - name: Check the internal links
+        run: python tools/check_links.py
 
   ui:
     name: web UI
