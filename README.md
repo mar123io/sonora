@@ -433,9 +433,15 @@ against the index and reads the tags of nothing that has not changed. The index
 lives in `%LOCALAPPDATA%\Sonora\library.sqlite` and is a cache: deleting it
 costs one rescan and nothing else ([ADR 0007](docs/adr/0007-the-library-index-is-a-cache.md)).
 
-There is no folder picker yet. A text box in the page would put a filesystem
-path back on the bridge, which is precisely what week 7 removed; it needs a
-native dialog, which belongs with the rest of the shell integration in week 9.
+Or press **Choose a folder** in the window, which opens the system's own folder
+dialog. That is the only way a filesystem path enters Sonora from the person
+using it, and the shape is deliberate: the page asks for a chooser and is never
+told what was picked. `library.chooseFolder` returns as soon as the dialog is up
+— a bridge call is served on the UI thread, and one that waited for somebody to
+find a folder would freeze the interface behind it — and the folder arrives the
+way every other fact about the library does, as the `root` of the next
+`library.status`. A text box in the page would have put a path back on the
+bridge, which is precisely what week 7 removed.
 
 ### Media keys and the system panel
 

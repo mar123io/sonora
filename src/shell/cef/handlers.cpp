@@ -1,6 +1,7 @@
 #include "cef/handlers.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -14,6 +15,7 @@
 
 #include "cef/agent_host.h"
 #include "cef/event_channel.h"
+#include "cef/folder_picker.h"
 #include "cef/library_host.h"
 #include "cef/player_host.h"
 #include "cef/shell_metrics.h"
@@ -87,12 +89,14 @@ ShellHandlers::ShellHandlers(const bridge::CapabilityRegistry& capabilities,
                              const ShellMetrics& metrics,
                              const EventChannel& events,
                              PlayerHost& player,
-                             LibraryHost& library)
+                             LibraryHost& library,
+                             FolderPicker& picker)
     : capabilities_(capabilities),
       metrics_(metrics),
       events_(events),
       player_(player),
-      library_(library) {}
+      library_(library),
+      picker_(picker) {}
 
 library::Library& ShellHandlers::RequireIndex() {
   library::Library* index = library_.index();
@@ -246,6 +250,7 @@ bridge::PlayerGetQueueResult ShellHandlers::PlayerGetQueue(
       entry.trackId = track->id;
       entry.title = track->title;
       entry.artist = track->artist;
+      entry.album = track->album;
       entry.durationMs = track->duration_ms;
       entry.artUrl = LibraryHost::ArtUrl(track->cover_hash);
     } else {
@@ -360,6 +365,36 @@ bridge::LibraryScanResult ShellHandlers::LibraryScan(const bridge::LibraryScanPa
   bridge::LibraryScanResult result;
   result.started = library_.StartScan(root);
   result.root = library_.Status().root;
+  return result;
+}
+
+bridge::LibraryChooseFolderResult ShellHandlers::LibraryChooseFolder(
+    const bridge::LibraryChooseFolderParams& params) {
+  (void)params;
+  static_cast<void>(RequireIndex());
+
+  // The dialog opens from the folder already in use, so "the one next to it" is
+  // one click away rather than a walk from the drive root. Empty on a first run,
+  // which the system reads as "start wherever you normally would".
+  const std::filesystem::path current = Utf8Path(library_.Status().root);
+
+  bridge::LibraryChooseFolderResult result;
+  // `this` outlives the dialog: the handlers are owned by the runtime and torn
+  // down after the browser, and the picker's callback holds no pointer to either
+  // -- see cef/folder_picker.h for why that is the arrangement rather than a
+  // lifetime to be careful about.
+  result.opened = picker_.Choose(current, [this](std::filesystem::path folder) {
+    if (folder.empty()) {
+      return;  // cancelled, and nothing about the library changes
+    }
+    // Same call the command line makes, which is the point: --library and the
+    // button are two ways of saying the same thing to the same code, and the
+    // folder is remembered by StartScan either way.
+    if (library_.StartScan(folder)) {
+      std::printf("library: scanning %s\n", library_.Status().root.c_str());
+      std::fflush(stdout);
+    }
+  });
   return result;
 }
 

@@ -11,6 +11,7 @@ namespace sonora::shell {
 
 class AgentHost;
 class EventChannel;
+class FolderPicker;
 class LibraryHost;
 class PlayerHost;
 class ShellMetrics;
@@ -36,7 +37,8 @@ class ShellHandlers final : public bridge::BridgeHandlers {
                 const ShellMetrics& metrics,
                 const EventChannel& events,
                 PlayerHost& player,
-                LibraryHost& library);
+                LibraryHost& library,
+                FolderPicker& picker);
 
   void SetAgent(AgentHost* agent) { agent_ = agent; }
 
@@ -70,6 +72,8 @@ class ShellHandlers final : public bridge::BridgeHandlers {
   bridge::LibraryGetStatusResult LibraryGetStatus(
       const bridge::LibraryGetStatusParams& params) override;
   bridge::LibraryScanResult LibraryScan(const bridge::LibraryScanParams& params) override;
+  bridge::LibraryChooseFolderResult LibraryChooseFolder(
+      const bridge::LibraryChooseFolderParams& params) override;
   bridge::LibraryListTracksResult LibraryListTracks(
       const bridge::LibraryListTracksParams& params) override;
   bridge::LibraryListAlbumsResult LibraryListAlbums(
@@ -107,6 +111,7 @@ class ShellHandlers final : public bridge::BridgeHandlers {
   const EventChannel& events_;
   PlayerHost& player_;
   LibraryHost& library_;
+  FolderPicker& picker_;
   AgentHost* agent_ = nullptr;
 };
 

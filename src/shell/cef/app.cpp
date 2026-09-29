@@ -130,6 +130,7 @@ void SonoraApp::OnContextInitialized() {
   client_options.capabilities = options_.capabilities;
   client_options.metrics = options_.metrics;
   client_options.events = options_.events;
+  client_options.folder_picker = options_.folder_picker;
   client_ = new SonoraClient(client_options);
 
   CefWindowInfo window_info;

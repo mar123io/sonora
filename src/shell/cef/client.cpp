@@ -7,6 +7,7 @@
 
 #include "cef/bridge_router.h"
 #include "cef/event_channel.h"
+#include "cef/folder_picker.h"
 #include "cef/update_service.h"
 #include "include/cef_parser.h"
 #include "include/wrapper/cef_helpers.h"
@@ -63,6 +64,9 @@ void SonoraClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   if (options_.events != nullptr) {
     options_.events->Attach(browser_);
   }
+  if (options_.folder_picker != nullptr) {
+    options_.folder_picker->Attach(browser_);
+  }
 }
 
 bool SonoraClient::DoClose(CefRefPtr<CefBrowser> browser) {
@@ -97,6 +101,11 @@ void SonoraClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     // Before browser_ is cleared, and before CefShutdown: a flush timer that
     // fires after this would otherwise reach a frame that no longer exists.
     options_.events->Detach();
+  }
+  if (options_.folder_picker != nullptr) {
+    // A chooser still on screen is dismissed by the window closing under it, and
+    // its callback finds a flag rather than this object. See cef/folder_picker.h.
+    options_.folder_picker->Detach();
   }
 
   // And the router goes here too, for a sharper version of the same reason.

@@ -54,6 +54,7 @@ class StubHandlers : public bridge::BridgeHandlers {
 
   SONORA_STUB_METHOD(LibraryGetStatus)
   SONORA_STUB_METHOD(LibraryScan)
+  SONORA_STUB_METHOD(LibraryChooseFolder)
   SONORA_STUB_METHOD(LibraryListTracks)
   SONORA_STUB_METHOD(LibraryListAlbums)
   SONORA_STUB_METHOD(LibraryListArtists)

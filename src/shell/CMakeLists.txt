@@ -16,6 +16,7 @@ add_library(sonora_cef STATIC
   cef/crash_keys.cpp
   cef/desktop.cpp
   cef/event_channel.cpp
+  cef/folder_picker.cpp
   cef/handlers.cpp
   cef/library_host.cpp
   cef/media_session.cpp

@@ -19,6 +19,7 @@
 #include "cef/crash_keys.h"
 #include "cef/desktop.h"
 #include "cef/event_channel.h"
+#include "cef/folder_picker.h"
 #include "cef/handlers.h"
 #include "cef/library_host.h"
 #include "cef/media_session.h"
@@ -41,6 +42,9 @@ std::unique_ptr<ShellMetrics> g_metrics;
 std::unique_ptr<EventChannel> g_events;
 std::unique_ptr<PlayerHost> g_player;
 std::unique_ptr<LibraryHost> g_library;
+// Before the handlers, which hold a reference to it, and before the client, which
+// hands it the browser. It owns nothing but a browser pointer and a flag.
+std::unique_ptr<FolderPicker> g_folder_picker;
 std::unique_ptr<ShellMediaSession> g_media;
 std::unique_ptr<DesktopIntegration> g_desktop;
 std::unique_ptr<ShellHandlers> g_handlers;
@@ -190,8 +194,9 @@ bool StartCef(const RuntimeConfig& config) {
     std::fprintf(stderr, "library: %s\n", g_library->description().c_str());
   }
 
+  g_folder_picker = std::make_unique<FolderPicker>();
   g_handlers = std::make_unique<ShellHandlers>(*g_capabilities, *g_metrics, *g_events,
-                                               *g_player, *g_library);
+                                               *g_player, *g_library, *g_folder_picker);
 
   // The one cycle in this graph, and it is broken by construction order rather than by a
   // weak reference: the agent needs the handlers to dispatch into, and the handlers need the
@@ -210,6 +215,7 @@ bool StartCef(const RuntimeConfig& config) {
   options.capabilities = g_capabilities.get();
   options.metrics = g_metrics.get();
   options.events = g_events.get();
+  options.folder_picker = g_folder_picker.get();
 
   g_app = new SonoraApp(std::move(options));
 
@@ -228,6 +234,7 @@ bool StartCef(const RuntimeConfig& config) {
     g_handlers->SetAgent(nullptr);
     g_agent.reset();
     g_handlers.reset();
+    g_folder_picker.reset();
     return false;
   }
   g_initialized = true;
@@ -375,6 +382,7 @@ void StopCef() {
   }
   g_agent.reset();
   g_handlers.reset();
+  g_folder_picker.reset();
   g_desktop.reset();
   g_media.reset();
   g_library.reset();

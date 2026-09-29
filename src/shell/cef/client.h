@@ -13,6 +13,7 @@ namespace sonora::shell {
 
 class BridgeRouter;
 class EventChannel;
+class FolderPicker;
 class ShellMetrics;
 
 // The browser-side handler set. One object implements every handler CEF asks
@@ -33,6 +34,9 @@ class SonoraClient final : public CefClient,
     // The client is what knows when a browser exists, so it is what tells the
     // event channel where to send and when to stop.
     EventChannel* events = nullptr;
+    // And the same for the folder chooser, for the same reason from the other
+    // side: a modal dialog needs a window to be modal to.
+    FolderPicker* folder_picker = nullptr;
   };
 
   explicit SonoraClient(Options options);

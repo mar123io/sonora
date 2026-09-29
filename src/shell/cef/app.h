@@ -16,6 +16,7 @@ class CapabilityRegistry;
 namespace sonora::shell {
 
 class EventChannel;
+class FolderPicker;
 class ShellMetrics;
 class LibraryHost;
 class SonoraClient;
@@ -44,6 +45,8 @@ class SonoraApp final : public CefApp, public CefBrowserProcessHandler {
     const bridge::CapabilityRegistry* capabilities = nullptr;
     ShellMetrics* metrics = nullptr;
     EventChannel* events = nullptr;
+    // Handed straight to the client, which is what learns that a browser exists.
+    FolderPicker* folder_picker = nullptr;
   };
 
   // Browser process.

@@ -115,6 +115,7 @@
         { "name": "trackId", "type": "int", "summary": "0 when this entry is not in the library, which happens for a file queued by --play." },
         { "name": "title", "type": "string", "summary": "Track title, or the file name when the index has never seen this file." },
         { "name": "artist", "type": "string", "summary": "Track artist, empty when unknown." },
+        { "name": "album", "type": "string", "summary": "Album name, empty when unknown. The page draws it next to the artist and derives a placeholder cover's colour from it, so that a queued track and the same track in the list are the same colour." },
         { "name": "durationMs", "type": "int", "summary": "Length, 0 when unknown." },
         { "name": "artUrl", "type": "string", "summary": "Cover, empty when there is none." }
       ]
@@ -312,7 +313,7 @@
     },
     {
       "name": "library",
-      "version": 1,
+      "version": 2,
       "summary": "The index of what is on disk. Every method here is a read except scan, and every read is answered from SQLite rather than from the filesystem -- which is what makes a list of fifty thousand tracks a query and not a directory walk.",
       "methods": [
         {
@@ -336,6 +337,14 @@
           "result": [
             { "name": "started", "type": "bool", "summary": "False when a scan was already in flight." },
             { "name": "root", "type": "string", "summary": "The folder being indexed." }
+          ]
+        },
+        {
+          "name": "chooseFolder",
+          "summary": "Opens the system's folder chooser and, if the person picks one, indexes it and remembers it. Returns as soon as the dialog is up rather than when it is answered -- a bridge call is served on the UI thread and one that waited for a person would freeze the interface behind it. What they chose arrives the only way it could: the root in the next library.status. Not offered to the agent, and this is the reason the whole agent catalogue is worth having: opening a dialog on somebody's screen is not a thing a sentence should be able to do.",
+          "params": [],
+          "result": [
+            { "name": "opened", "type": "bool", "summary": "False when there is no window to hang a dialog on, or when one is already open. Not an error -- a second chooser over the first is the bug this prevents." }
           ]
         },
         {
