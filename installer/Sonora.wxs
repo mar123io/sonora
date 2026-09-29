@@ -74,6 +74,7 @@
       <ComponentGroupRef Id="Payload" />
       <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="UrlProtocol" />
+      <ComponentRef Id="AppIdentity" />
       <ComponentRef Id="FileAssociation" />
     </Feature>
 
@@ -118,6 +119,24 @@
                      Type="string" Value="[INSTALLFOLDER]Sonora.exe,0" />
       <RegistryValue Root="HKCU" Key="Software\Classes\sonora\shell\open\command"
                      Type="string" Value="&quot;[INSTALLFOLDER]Sonora.exe&quot; &quot;%1&quot;" />
+    </Component>
+
+    <Component Id="AppIdentity" Directory="INSTALLFOLDER" Guid="B2F1A47C-6E30-4B3E-9E5D-1C0A7F4D2E88">
+      <!-- What the shell answers with when something asks who MarioLizzio.Sonora
+           is. Without it the Windows media panel says "Unknown app" over a
+           playing track: the process claims the id, the panel asks the shell to
+           resolve it, and a claim nobody registered resolves to nothing.
+
+           Same arrangement as the URL protocol above, for the same reason and
+           written by the same pair: src/platform/win/app_identity.h writes these
+           values at every start so a build folder works, and the installer writes
+           them so an installed copy works before it has ever been run — and so
+           that an uninstall takes them away again, which the application cannot
+           do for itself. -->
+      <RegistryValue Root="HKCU" Key="Software\Classes\AppUserModelId\MarioLizzio.Sonora"
+                     Name="DisplayName" Type="string" Value="Sonora" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\AppUserModelId\MarioLizzio.Sonora"
+                     Name="IconUri" Type="string" Value="[INSTALLFOLDER]Sonora.exe" />
     </Component>
 
     <Component Id="FileAssociation" Directory="INSTALLFOLDER" Guid="395C0AD5-3590-4EDD-AD63-26A6B545D9D9">

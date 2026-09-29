@@ -195,8 +195,9 @@ class Win32ShellIntegration final : public ShellIntegration {
     // makes the dependency explicit rather than lucky. See app_identity.h --
     // the jump list below is stored under this id, so if it were ever wrong
     // here the list would be registered somewhere nobody looks.
-    std::printf("shell: app id %ls (0x%08lx)\n", kAppUserModelId,
-                static_cast<unsigned long>(SetProcessAppUserModelId()));
+    std::printf("shell: app id %ls (0x%08lx), display name %s\n", kAppUserModelId,
+                static_cast<unsigned long>(SetProcessAppUserModelId()),
+                RegisterAppUserModelId() ? "registered" : "NOT registered");
   }
 
   ~Win32ShellIntegration() override { Stop(); }

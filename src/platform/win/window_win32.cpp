@@ -229,6 +229,9 @@ class Win32Window final : public Window {
     // taskbar button is created from this identity, and an id set afterwards
     // groups the button under whatever the shell guessed. See app_identity.h.
     SetProcessAppUserModelId();
+    // And the name that goes with it, so the media panel and the toasts say
+    // "Sonora" rather than "Unknown app". Best effort; see app_identity.h.
+    RegisterAppUserModelId();
     RegisterWindowClass();
 
     // The window is created at the *system* dpi and then corrected by the
