@@ -6,13 +6,67 @@ a tag like `v0.9-delivery` is a milestone and not a release.
 
 ---
 
-## Unreleased
+## 1.1.0
 
-Phase 6 of the roadmap, which the job description asked for by name: *"AI agent integrations
-within the Spotify Desktop experience"*.
+The window, redrawn; the music folder is something you choose rather than something you type on
+a command line; and phase six, which had been sitting unreleased.
 
-- **An agent gets a list, not a bridge.** 18 of the bridge's 27 methods are offered to an agent,
-  by a line in the schema next to the method; the other 9 are absent from the only list the
+### The interface
+
+- **A folder chooser.** `library.chooseFolder` opens the system's own dialog. It returns when
+  the dialog is up rather than when it is answered, because bridge calls are served one after
+  another on the UI thread and one that waited for a person would freeze everything behind it;
+  what was chosen arrives as the `root` of the next `library.status`. The page is still never
+  told a filesystem path, and the method is deliberately absent from the agent's catalogue —
+  opening a dialog on somebody's screen is not a thing a sentence should be able to do.
+  `--library` still works and is still the right tool for a shortcut or a second library.
+- **A track list with columns.** Header and rows share one grid, so the album name starts in
+  the same place on every line. Rows are a constant 44px, which is what the virtual list needs
+  to turn a scroll offset into a row index by dividing.
+- **One transport row instead of three**, 72px, that never changes height. What the status line
+  printed — which track of how many, the gapless joins, the underruns — is the bar's tooltip.
+- **The agent panel is the second tab of the right column** rather than a box floating over the
+  queue its plans change, and it keeps the conversation instead of overwriting it.
+- **The scanner's debug log is a progress bar** with the two numbers that are actually known:
+  files reached, and files that had to be read. No percentage, because there is no total to
+  divide by.
+- **Covers derived from the tags** — two initials on a hue derived from the album name, the
+  same colour everywhere that album appears — instead of one letter on one grey, which made
+  fifty thousand rows fifty thousand identical squares.
+- **Light and dark**, with dark the default and "follow the machine" a third setting. One set
+  of rules, two sets of token values, no second stylesheet.
+- **Empty states that say which emptiness they are**: no folder, an empty index, and a search
+  that matched nothing are three different problems and used to be one sentence.
+- **A layout that survives being resized.** Below 1020px the right column becomes a drawer over
+  the content with a button in the header, and the album column is what gives up room; the
+  track list gives up nothing. Verified down to 640×480, which is the smallest the window
+  allows.
+- No web font and no icon set, because there is no network behind `sonora://`: every icon is an
+  inline SVG built node by node, and every string still arrives as `textContent`.
+
+### Windows
+
+- **The system media panel says "Sonora"**, not "Unknown app". The process claimed an
+  AppUserModelID that only the installed Start Menu shortcut ever registered, so every run from
+  a build folder resolved to nothing and the panel captioned a correct title, artist and cover
+  with the name of no application at all. Sonora now registers the id's display name and icon
+  itself, and the installer writes the same values so that an uninstall removes them.
+
+### The bridge
+
+- `QueueEntry` carries its album, so the transport can name it and a placeholder cover can be
+  the colour that album already is in the list.
+- The `library` capability is version 2. A page checks for that version before offering the
+  folder chooser; against an older shell there is no button and the command-line flag is the
+  whole story, which is what it was.
+
+### The agent — phase 6 of the roadmap
+
+The job description asked for it by name: *"AI agent integrations within the Spotify Desktop
+experience"*.
+
+- **An agent gets a list, not a bridge.** 18 of the bridge's 28 methods are offered to an agent,
+  by a line in the schema next to the method; the other 10 are absent from the only list the
   broker checks a plan against rather than hidden from the planner. 9 run on sight, 9 are
   proposed and wait for a person. The catalogue a planner is told about and the table the broker
   validates against are generated from the same block, so they cannot disagree.

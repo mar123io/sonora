@@ -2573,3 +2573,112 @@ era contorno. Una verifica guarda quello per cui è stata scritta.
 - **La lista dei sei esclusi sarà sbagliata prima o poi.** Sono sei nomi scelti da una persona
   in un pomeriggio. Il meccanismo che conta è che aggiungerne uno costi una riga in un file che
   qualcuno rilegge; i sei specifici sono una posizione di partenza, non un risultato.
+
+---
+
+## Interludio — l'interfaccia, ridisegnata
+
+Non è una settimana del piano. È il debito che era rimasto: tredici settimane spese a far
+funzionare il ponte, l'audio, l'indice, l'aggiornamento e il gate delle prestazioni, e una
+finestra che le mostrava tutte allo stesso modo in cui un test le mostra.
+
+### Cosa c'era di sbagliato
+
+Cinque cose, nell'ordine in cui si notano guardando una schermata invece del codice.
+
+- **Il log dello scanner era nella barra laterale.** Ogni file attraversato, per nome, che
+  scorreva. Serviva a scrivere lo scanner ed è servito; dopo, è l'unica cosa che una persona
+  che aspetta la propria musica non può usare. Ora è una barra e due numeri — quanti file la
+  scansione ha raggiunto e quanti ha dovuto leggere. Nessuna percentuale: `filesSeen` dice
+  quanto lontano è arrivata la camminata, non quanto le manca, e una barra che dichiara una
+  frazione si inventerebbe il denominatore.
+- **La lista non aveva intestazione, quindi non aveva colonne.** Ogni riga dimensionava le
+  proprie e il nome dell'album cominciava a una x diversa su ogni riga. Adesso intestazione e
+  righe condividono una griglia dichiarata una volta sola nel CSS.
+- **Il transport erano tre righe.** Titolo, poi controlli sopra la barra di posizione, poi una
+  riga di stato e una di errore vuote quasi sempre che si tenevano lo spazio lo stesso. 150px
+  di finestra per dire meno di quanto dice una riga. Ora è una riga da 72px, e i numeri che
+  stavano nella riga di stato — traccia N di M, giunzioni gapless, underrun — sono il tooltip
+  della barra: esatti, raggiungibili, non più al posto della lista.
+- **Le copertine erano una lettera su un grigio.** Cinquantamila righe, cinquantamila quadrati
+  identici. Ora sono due iniziali su una tinta derivata dal nome dell'album: deterministica,
+  quindi lo stesso album è dello stesso colore nella lista, nella coda e nella barra in basso.
+  Zero byte di grafica, zero richieste di rete — che è un vincolo, non una scelta.
+- **Il pannello dell'agente galleggiava sopra la coda.** Copriva esattamente la cosa che i suoi
+  piani cambiano: per vedere cosa aveva fatto un piano bisognava spostare il pannello che lo
+  aveva appena fatto. Adesso è la seconda scheda di quella colonna, e conserva la
+  conversazione invece di sovrascriverla.
+
+### Le due regole che hanno deciso tutto il resto
+
+Non sono gusto.
+
+La pagina arriva da `sonora://`, da byte compilati dentro l'eseguibile, e dietro quello schema
+non c'è rete. Niente font web, niente set di icone, niente CDN, nemmeno una richiesta fallita.
+Ogni icona è un SVG costruito nodo per nodo — costruito, non ricavato da una stringa, così la
+regola che vale dalla settimana 7 vale anche nel codice nuovo: `textContent`, mai `innerHTML`,
+perché ogni stringa in questa finestra è uscita da un tag di un file musicale.
+
+E le righe sono alte 44px costanti perché la lista virtuale trasforma lo scroll in un indice
+dividendo per quel numero. Adesso quel numero sta nel CSS come `--row` e viene letto da lì una
+volta sola, invece di essere scritto in due file che possono non essere d'accordo.
+
+### Numeri di verifica
+
+- **Dieci schermate, rese in Chromium contro uno shell finto, guardate una per una**, nei due
+  temi: lista, griglia degli album, ricerca con risultati, ricerca senza, agente che risponde,
+  agente che aspetta una conferma, nessuna cartella, scansione in corso, coda vuota. Nessun
+  errore di console, nessun errore di pagina.
+- **Quattro difetti sono usciti da quella passata e nessuno dalla lettura del codice**:
+  monogrammi di una lettera sola; il marchio a barre dimensionato per 13px e usato dentro una
+  copertina da 160px, dove sembravano tre graffi; `library.search` spezzato a fine riga come
+  `library.se arch`, che è un nome di metodo che non esiste; e il marchio di ogni stato vuoto
+  spostato di lato rispetto al proprio titolo, perché era dentro un `div` a blocco in una
+  colonna centrata. Tutti e quattro invisibili nel diff.
+- **`tsc --noEmit` e `vite build` puliti**; il bundle è 42 kB di JS e 22 kB di CSS, senza
+  dipendenze aggiunte.
+- **Un solo campo nuovo nello schema** (`QueueEntry.album`), che non aggiunge metodi e quindi
+  non tocca `tests/stub_handlers.h` — il controllo vale la pena dirlo, perché l'ultima volta che
+  questo schema è cresciuto era un metodo e ogni implementazione si è rotta insieme.
+
+### Tre cose trovate dopo, guardando la finestra vera
+
+Il mockup era d'accordo con sé stesso. La finestra su una macchina vera non lo era.
+
+- **La cartella si sceglie.** Nel mockup c'era un pulsante "Choose a folder" che ho tolto
+  perché dietro non c'era niente: la radice era un argomento da riga di comando. Adesso dietro
+  c'è `library.chooseFolder`, che apre il dialogo di sistema e ritorna subito — le chiamate del
+  ponte sono servite una dopo l'altra sul thread della UI, e una che aspettasse una persona
+  bloccherebbe tutte quelle dietro di sé. Quello che è stato scelto torna come ogni altro fatto
+  sulla libreria: la `root` del prossimo `library.status`. Alla pagina il percorso non viene
+  detto mai, che è la regola della settimana 7 e non cambia.
+- **Il layout non sopravviveva al ridimensionamento.** Sotto i 1100px la finestra si spezzava:
+  il pannello dei contenuti ad altezza zero, il transport nella seconda riga, la coda appesa
+  in basso a destra. La causa è che una media query non alza la specificità: `@media { #side {
+  display:none } }` in cima al file e `#side { display:flex }` seicento righe più sotto sono
+  due selettori di id, e vince il secondo — a qualunque larghezza. Adesso tutte le regole che
+  dipendono dalla larghezza stanno in una sezione unica in fondo al foglio, dopo ogni regola
+  che devono sovrascrivere. E sotto la soglia la colonna destra non sparisce: diventa un
+  cassetto sopra il contenuto, con un pulsante nell'intestazione.
+- **Il pannello multimediale di Windows diceva "App sconosciuta".** Il processo dichiarava
+  `MarioLizzio.Sonora` e nessuno l'aveva registrato: la scorciatoia del menu Start porta quel
+  nome, ma esiste solo dopo un'installazione, e ogni esecuzione dalla cartella di build
+  risolveva a niente. Ora l'applicazione registra da sé
+  `HKCU\Software\Classes\AppUserModelId\MarioLizzio.Sonora` con `DisplayName` e `IconUri`, e
+  l'installer scrive gli stessi due valori così che la disinstallazione se li riprenda.
+
+### Quello che non ho fatto, apposta
+
+- **Un carattere tipografico da display.** Si può fare, ma va incorporato nel binario e fa
+  crescere l'MSI. È una decisione sul prodotto, non una cosa in cui scivolare.
+
+### Un errore mio, per il verbale
+
+Ho sovrascritto `README.md` con una copia vecchia — la mia copia nel container era ferma a
+prima dei commit 12–21, e il file che ho consegnato ha cancellato la tabella dei tre host e
+ADR 0015. Se ne è accorto il controllo dei link, che è passato da 61 a 57: lo stesso script
+scritto due giorni fa per un file che mancava ha trovato quattro link che erano spariti.
+Ripristinato da `git show HEAD:README.md` e rifatta la modifica sul file vero; poi ho
+verificato **tutti** gli altri file consegnati contro HEAD, uno per uno, e nessun altro era
+vecchio. Il controllo che serviva non era "il diff sembra ragionevole", era "il file di
+partenza è quello giusto".
