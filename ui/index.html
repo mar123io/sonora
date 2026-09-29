@@ -6,20 +6,24 @@
     <title>Sonora</title>
   </head>
   <body>
+    <!-- Five mount points and nothing else. Every element below them is built in
+         TypeScript, which is deliberate: this page is served from sonora:// out of
+         bytes embedded in the executable, and markup in here would be a second
+         place where the structure is declared and a second place to forget. -->
     <div id="app">
       <aside id="sidebar"></aside>
       <header id="search"></header>
       <main id="content"></main>
-      <aside id="queue"></aside>
+      <!-- The right-hand column: the queue, and the agent as its second tab. The
+           agent used to be a box floating over this one, which meant it covered
+           the thing it was changing. See ADR 0016. -->
+      <aside id="side"></aside>
       <footer id="transport"></footer>
     </div>
-    <!-- The agent panel. A sentence in, and the plan the shell is willing to carry out --
-         every step of it shown, because a plan nobody can read is a plan nobody can agree
-         to. Removed entirely when the capability is off. See ADR 0016. -->
-    <section id="agent-panel"></section>
-    <!-- Week 4's diagnostics page, now a panel that starts closed. Still the
-         fastest way to see whether the bridge, the negotiation and the event
-         coalescing are working, from inside the application. -->
+    <!-- Week 4's diagnostics page, now a panel that starts closed and is removed
+         entirely when the capability is off. Still the fastest way to see whether
+         the bridge, the negotiation and the event coalescing are working, from
+         inside the application. -->
     <details id="diagnostics-panel">
       <summary>Bridge diagnostics</summary>
       <dl id="diagnostics"></dl>

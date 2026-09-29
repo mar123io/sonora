@@ -1,7 +1,8 @@
 import { CapabilitySet } from './bridge/capabilities';
+import { onEvent } from './bridge/events';
 import { type PlayerState, type QueueEntry } from './bridge/generated';
 import { sonora } from './bridge/invoke';
-import { coverElement, element, formatTime } from './format';
+import { barMark, coverElement, element, formatDuration, formatTime, plural } from './format';
 
 // The queue: what is going to play, and what is playing now.
 //
@@ -38,6 +39,10 @@ export class QueueModel {
 
   get all(): readonly QueueEntry[] {
     return this.entries;
+  }
+
+  get index(): number {
+    return this.currentIndex;
   }
 
   get current(): QueueEntry | undefined {
@@ -105,8 +110,14 @@ export class QueueModel {
 }
 
 export class QueuePanel {
-  private readonly heading = element('h2', 'queue-heading', 'Queue');
+  private readonly now = element('div', 'now');
+  private readonly headingLabel = element('span', undefined, 'Next up');
+  private readonly left = element('span', 'queue-left');
+  private readonly head = element('div', 'queue-head');
   private readonly list = element('div', 'queue-list');
+  /** Minutes remaining, so the label is rewritten when it changes and not 4 times a second. */
+  private lastLeft = -1;
+  private elapsed = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -119,31 +130,40 @@ export class QueuePanel {
       return;
     }
 
-    const clear = element('button', 'queue-clear', 'Clear');
-    clear.type = 'button';
-    clear.addEventListener('click', () => {
-      void sonora.player.clearQueue();
-    });
-
-    const header = element('div', 'queue-header');
-    header.append(this.heading, clear);
-    this.root.replaceChildren(header, this.list);
+    this.head.append(this.headingLabel, this.left);
+    this.root.replaceChildren(this.now, this.head, this.list);
 
     this.model.onChange(() => this.render());
+    // Only for the "N min left" figure, which needs how far into the current
+    // track the listener is. Recomputed on every state and written to the DOM
+    // only when the minute changes -- the alternative is a text node rewritten
+    // four times a second to say the same thing.
+    onEvent('player.state', (payload) => {
+      this.elapsed = payload.player.positionMs;
+      this.renderRemaining();
+    });
     this.render();
   }
 
   private render(): void {
     const entries = this.model.all;
     const current = this.model.current;
-    this.heading.textContent = entries.length === 0 ? 'Queue' : `Queue (${entries.length})`;
+
+    this.renderNow(current);
 
     if (entries.length === 0) {
-      this.list.replaceChildren(
-        element('p', 'queue-empty', 'Nothing queued. Double-click a track to play it.'),
-      );
+      this.head.hidden = true;
+      this.list.replaceChildren(this.emptyState());
       return;
     }
+
+    this.head.hidden = false;
+    // "Next up" is a claim about what is below it. With played entries still in
+    // the list it would be a false one, so in that case the heading says what it
+    // actually is.
+    this.headingLabel.textContent = this.model.index > 0 ? 'In the queue' : 'Next up';
+    this.lastLeft = -1;
+    this.renderRemaining();
 
     this.list.replaceChildren(
       ...entries.map((entry) => {
@@ -152,10 +172,16 @@ export class QueuePanel {
         if (entry === current) {
           row.dataset['current'] = 'true';
         }
-        row.append(
-          coverElement(entry.artUrl, entry.title, 'cover cover-tiny'),
+
+        const labels = element('div', 'queue-labels');
+        labels.append(
           element('span', 'queue-title', entry.title),
           element('span', 'queue-artist', entry.artist),
+        );
+
+        row.append(
+          coverElement(entry.artUrl, entry.album || entry.artist || entry.title, 'cover cover-xs'),
+          labels,
           element('span', 'queue-time', formatTime(entry.durationMs)),
         );
         // jumpTo rather than a pile of next() calls, and absolute rather than
@@ -166,5 +192,70 @@ export class QueuePanel {
         return row;
       }),
     );
+  }
+
+  private renderNow(current: QueueEntry | undefined): void {
+    if (current === undefined) {
+      this.now.hidden = true;
+      return;
+    }
+    this.now.hidden = false;
+
+    const labels = element('div', 'now-labels');
+    labels.append(
+      element('span', 'now-kicker', 'Now playing'),
+      element('span', 'now-title', current.title),
+      element(
+        'span',
+        'now-artist',
+        [current.artist, current.album].filter((part) => part !== '').join(' · '),
+      ),
+    );
+    this.now.replaceChildren(
+      coverElement(current.artUrl, current.album || current.title, 'cover cover-lg'),
+      labels,
+    );
+  }
+
+  /** What is left of the queue from the current track on, current track included. */
+  private renderRemaining(): void {
+    const entries = this.model.all;
+    if (entries.length === 0) {
+      return;
+    }
+    const from = Math.max(this.model.index, 0);
+    let remaining = 0;
+    for (let index = from; index < entries.length; index += 1) {
+      remaining += entries[index]?.durationMs ?? 0;
+    }
+    remaining = Math.max(0, remaining - this.elapsed);
+
+    const minutes = Math.round(remaining / 60000);
+    if (minutes === this.lastLeft) {
+      return;
+    }
+    this.lastLeft = minutes;
+    // A queue with nothing but untagged files has no durations to add up, and
+    // "0 min left" over four tracks is worse than saying how many there are.
+    this.left.textContent =
+      remaining > 0
+        ? `${formatDuration(remaining)} left`
+        : plural(entries.length - from, 'track');
+  }
+
+  private emptyState(): HTMLElement {
+    const empty = element('div', 'empty empty-small');
+    empty.append(barMark('bars empty-mark', [0.3, 0.6, 0.42]));
+    const text = element('div');
+    text.append(
+      element('p', 'empty-title', 'Nothing queued'),
+      element(
+        'p',
+        'empty-body',
+        'Double-click a track to play it, or use the plus button to add it to the end.',
+      ),
+    );
+    empty.append(text);
+    return empty;
   }
 }

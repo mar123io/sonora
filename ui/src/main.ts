@@ -6,6 +6,8 @@ import { onEvent } from './bridge/events';
 import { BridgeError, sonora } from './bridge/invoke';
 import { LibraryView } from './library';
 import { QueueModel, QueuePanel } from './queue';
+import { SidePanel } from './side_panel';
+import { startTheme } from './theme';
 import { Transport } from './transport';
 
 // Week 7 turns the page into a music player: a library on the left, a list in
@@ -15,6 +17,10 @@ import { Transport } from './transport';
 // that starts closed. They have not stopped being useful -- they are how the
 // bridge, the capability negotiation and the event coalescing are checked from
 // the inside -- they are just no longer what the window is for.
+//
+// The theme is applied before anything else runs, so the window never appears in
+// one theme and then changes into the other.
+startTheme();
 
 interface Row {
   readonly label: string;
@@ -228,7 +234,6 @@ async function main(): Promise<void> {
 
   const transport = new Transport(root('#transport'), queue);
   void transport.mount(capabilities);
-  new QueuePanel(root('#queue'), queue).mount(capabilities);
 
   const library = new LibraryView(
     { sidebar: root('#sidebar'), content: root('#content'), search: root('#search') },
@@ -251,9 +256,30 @@ async function main(): Promise<void> {
         await sonora.player.enqueue({ trackIds: [...trackIds] });
         await queue.refresh();
       },
+      // The list marks the row that is playing. It asks rather than being told,
+      // and it is told only that something changed -- so it never holds a copy of
+      // the player's state that can go stale.
+      currentTrackId: () => queue.current?.trackId ?? 0,
+      onCurrentChanged: (listener) => queue.onChange(listener),
     },
   );
+  // Synchronous as far as the header is concerned: mount() builds the page before
+  // its first await, which is what the line below depends on.
   void library.mount(capabilities);
+
+  // The right-hand column, and the two tabs in it. The agent panel used to float
+  // over this column in fixed pixels; it is furniture now. See ADR 0016.
+  //
+  // After the library, because in a narrow window this column is a drawer and the
+  // button that opens it belongs in the search header -- which the library has
+  // just built. Appending to a bar that is about to be replaced would put the
+  // button on the page for exactly as long as it takes to lose it.
+  const side = new SidePanel(root('#side'), queue, {
+    app: root('#app'),
+    header: root('#search'),
+  });
+  const hosts = side.mount(capabilities);
+  new QueuePanel(hosts.queue, queue).mount(capabilities);
 
   // One subscription, fanned out here rather than three components each asking
   // the shell for the same thing.
@@ -263,10 +289,13 @@ async function main(): Promise<void> {
 
   // Last, and after the queue: a plan that the person accepts changes what is playing, and
   // the panel says so by asking the queue to catch up rather than by knowing anything about
-  // it. It removes itself when the capability is off.
-  void new AgentPanel(root('#agent-panel'), async () => {
+  // it. It draws nothing when the capability is off, and the tab that would hold it is not
+  // drawn either.
+  const agent = new AgentPanel(hosts.agent, async () => {
     await queue.refresh();
-  }).mount(capabilities);
+  });
+  side.onAskReset(() => agent.reset());
+  void agent.mount(capabilities);
 
   await checkVersion();
   await checkRoundTrip();

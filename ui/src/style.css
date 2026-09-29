@@ -1,17 +1,137 @@
+/* Sonora's stylesheet.
+ *
+ * Two things shape all of it.
+ *
+ * The first is where the page comes from. It is served from sonora:// out of
+ * bytes compiled into the executable, and that scheme has no network behind it:
+ * no web font, no icon set, no CDN, not even a failed request. Everything here is
+ * system fonts, colours, and shapes drawn with CSS or inline SVG. A display face
+ * is possible -- it would have to be embedded, and it would grow the installer --
+ * but it is a decision to take, not a default to drift into.
+ *
+ * The second is the virtual list. Rows are a constant 44px because the scroll
+ * position is turned into a row index by dividing, and that arithmetic is the
+ * entire reason fifty thousand tracks cost forty DOM nodes. Any rule in here that
+ * would make one row taller than another breaks it, which is why the height is a
+ * token and not a number typed in six places.
+ */
+
+/* ---- tokens -------------------------------------------------------------- */
+
+/* Dark is the default, and the light set below is the same design with different
+   values -- not a second stylesheet. Every colour in this file is one of these
+   names, so the two themes cannot drift apart: a rule that hardcodes a hex is a
+   rule that only works in one of them. */
 :root {
   color-scheme: dark;
-  --bg: #121212;
-  --panel: #181818;
-  --panel-2: #1f1f1f;
-  --line: #2a2a2a;
-  --fg: #e6e6e6;
-  --muted: #9aa0a6;
+
+  --bg: #0d0f13;
+  --surface: #14171d;
+  --raised: #1a1e26;
+  --line: #262b34;
+  --line-strong: #323945;
+
+  --fg: #e8ecf2;
+  --dim: #b9c1cc;
+  --muted: #8f98a6;
+  --faint: #5b6573;
+
   --accent: #6ea8fe;
-  --ok: #7ee787;
-  --warn: #d29922;
+  --accent-hi: #8cbcff;
+  --accent-soft: #1b2740;
+  --accent-fg: #8cbcff;
+  --on-accent: #0d0f13;
+
+  --ok: #63c98a;
+  --warn: #e0b155;
   --bad: #ff7b72;
-  --row-height: 34px;
+
+  --row-hover: #1a1e26;
+  --row-current: #161b24;
+  --shade: rgb(6 9 14 / 50%);
+
+  /* The virtual list divides by this. See the note at the top. */
+  --row: 44px;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
+
+:root[data-theme='light'],
+:root[data-theme='light'] * {
+  color-scheme: light;
+}
+
+/* The OS preference decides when nothing has been chosen in the window; the
+   toggle in the sidebar decides when something has. Guarded by :not() so that
+   choosing dark on a machine set to light actually stays dark. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+  }
+}
+
+/* One block of values, applied by either route. Repeated rather than nested
+   because a custom property set inside a media query cannot be reused by a
+   selector outside it, and two copies of a list of colours is better than a
+   preprocessor. */
+:root[data-theme='light'] {
+  --bg: #eef0f4;
+  --surface: #ffffff;
+  --raised: #f0f2f5;
+  --line: #dfe3e9;
+  --line-strong: #ccd2db;
+
+  --fg: #12161c;
+  --dim: #3d4653;
+  --muted: #5b6573;
+  --faint: #8b95a3;
+
+  --accent: #2563c9;
+  --accent-hi: #1d52ab;
+  --accent-soft: #e4edfd;
+  --accent-fg: #1d52ab;
+  --on-accent: #ffffff;
+
+  --ok: #1a7f4b;
+  --warn: #8a5d0c;
+  --bad: #b3261e;
+
+  --row-hover: #f0f2f5;
+  --row-current: #eef4fe;
+  --shade: rgb(255 255 255 / 55%);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --bg: #eef0f4;
+    --surface: #ffffff;
+    --raised: #f0f2f5;
+    --line: #dfe3e9;
+    --line-strong: #ccd2db;
+
+    --fg: #12161c;
+    --dim: #3d4653;
+    --muted: #5b6573;
+    --faint: #8b95a3;
+
+    --accent: #2563c9;
+    --accent-hi: #1d52ab;
+    --accent-soft: #e4edfd;
+    --accent-fg: #1d52ab;
+    --on-accent: #ffffff;
+
+    --ok: #1a7f4b;
+    --warn: #8a5d0c;
+    --bad: #b3261e;
+
+    --row-hover: #f0f2f5;
+    --row-current: #eef4fe;
+    --shade: rgb(255 255 255 / 55%);
+  }
+}
+
+/* ---- the page ------------------------------------------------------------ */
 
 * {
   box-sizing: border-box;
@@ -34,168 +154,602 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 13px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
   /* The window is the chrome; the page must never scroll the whole app. Each
      pane scrolls on its own, which is also what the virtual list depends on. */
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Sidebar | content | queue, with the search bar above the content and the
-   transport across the bottom. Named areas rather than nesting: the layout is
-   the same three columns at every size this window is used at, and a grid says
-   so in one place. */
+/* Sidebar | content | right column, with the search bar above the content and
+   the transport across the bottom. Named areas rather than nesting: the layout is
+   the same three columns at every size this window is used at, and a grid says so
+   in one place. */
 #app {
   height: 100%;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 300px;
+  grid-template-columns: 224px minmax(0, 1fr) var(--side, 308px);
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
-    "sidebar search  queue"
-    "sidebar content queue"
-    "transport transport transport";
+    'sidebar search  side'
+    'sidebar content side'
+    'transport transport transport';
+  /* The containing block for the right column when it stops being a column and
+     becomes a drawer over the content. See the responsive section at the end. */
+  position: relative;
+  /* And the clip for it: a drawer parked off the right edge is still a box at a
+     positive x, which grows the document's scroll width. Nothing can scroll to
+     it -- body is overflow:hidden -- but a page wider than its window is a fact
+     worth not having. */
+  overflow: hidden;
 }
+
+/* Shown only in the narrow layout, where the right column is a drawer: the
+   button that opens it, and the sheet of dark that closes it again. */
+.side-toggle {
+  display: none;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  flex: none;
+}
+
+.side-toggle:hover {
+  border-color: var(--line-strong);
+}
+
+.scrim {
+  display: none;
+  position: absolute;
+  inset: 0 0 72px;
+  z-index: 15;
+  background: rgb(0 0 0 / 42%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease-out;
+}
+
+/* Anything that is only there for a screen reader. Not display:none, which would
+   take it out of the accessibility tree along with everything else. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- the bar mark -------------------------------------------------------- */
+
+/* Four rounded bars, three lit and one not: the application icon, which was
+   already in the installer and in the taskbar before it was in the window. It is
+   used here for the brand, for the row that is playing, and for the two absences
+   that have nothing else to draw -- a file with no artwork and no tags, and a
+   library with nothing in it. One mark, three jobs, no image files. */
+.bars,
+.brand-mark {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 13px;
+  flex: none;
+}
+
+.bars > i,
+.brand-mark > i {
+  display: block;
+  width: 2.5px;
+  height: calc(var(--bar) * 100%);
+  border-radius: 1.5px;
+  background: currentcolor;
+}
+
+.brand-mark {
+  height: 18px;
+  gap: 3px;
+  color: var(--accent);
+}
+
+.brand-mark > i {
+  width: 3px;
+  border-radius: 1.5px;
+}
+
+/* The grey one. In the icon it is what keeps the mark from reading as a plain
+   bar chart. */
+.brand-mark > i:last-child {
+  background: var(--faint);
+}
+
+/* ---- sidebar ------------------------------------------------------------- */
 
 #sidebar {
   grid-area: sidebar;
-  background: var(--panel);
+  background: var(--surface);
   border-right: 1px solid var(--line);
   padding: 16px 12px;
-  overflow-y: auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 6px;
+}
+
+.brand-name {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  background: var(--raised);
+}
+
+/* The inset shadow rather than a border, so that turning the marker on does not
+   move the label by a pixel. */
+.nav-item[data-active='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.nav-item[data-active='true'] .nav-label {
+  font-weight: 500;
+}
+
+.nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-item[data-active='true'] .nav-count {
+  color: inherit;
+  opacity: 0.75;
+}
+
+.sidebar-spacer {
+  flex: 1;
+  min-height: 0;
+}
+
+.library-foot {
+  border-top: 1px solid var(--line);
+  padding: 14px 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The folder, and the way to change it. A button when the shell has a chooser,
+   and the same line without any button behaviour when it has not -- which is what
+   the disabled state is doing here, rather than saying "you may not". */
+.library-root {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  margin-left: -6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.library-root:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.library-root:disabled {
+  cursor: default;
+  padding-left: 0;
+  margin-left: 0;
+}
+
+.library-root > span {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* The interesting end of a path is the right-hand one. */
+  direction: rtl;
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* What used to be a scrolling log of every file the scanner touched. The log was
+   genuinely useful while the scanner was being written and is noise afterwards:
+   nobody watching their music appear needs the name of the file being read, they
+   need to know how much is left. */
+.scan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scan-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.scan-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.scan-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.scan-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 200ms linear;
+}
+
+/* A scan whose total is not known yet: the bar says "working" without claiming a
+   fraction it has not got. */
+.scan-fill[data-indeterminate='true'] {
+  width: 35%;
+  animation: scan-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes scan-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(286%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-fill[data-indeterminate='true'] {
+    width: 100%;
+    animation: none;
+    opacity: 0.4;
+  }
+}
+
+.library-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.library-note[data-kind='bad'] {
+  color: var(--bad);
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  color: var(--fg);
+}
+
+/* ---- search bar ---------------------------------------------------------- */
 
 #search {
   grid-area: search;
   display: flex;
-  gap: 8px;
-  padding: 12px 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--line);
 }
+
+.search-field {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.search-icon {
+  position: absolute;
+  left: 11px;
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 68px 0 32px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--fg);
+  font: inherit;
+}
+
+.search-input::placeholder {
+  color: var(--faint);
+}
+
+.search-input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Chromium draws its own clear button, which is a different shape and a
+   different colour from the one next to it in every other field on the page. */
+.search-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search-hint {
+  position: absolute;
+  right: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.search-clear {
+  position: absolute;
+  right: 66px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--line);
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.search-clear:hover {
+  background: var(--line-strong);
+  color: var(--fg);
+}
+
+.rescan {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  flex: none;
+}
+
+.rescan:hover {
+  border-color: var(--line-strong);
+}
+
+/* ---- content ------------------------------------------------------------- */
 
 #content {
   grid-area: content;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 16px 16px 0;
 }
 
-#queue {
-  grid-area: queue;
-  background: var(--panel);
-  border-left: 1px solid var(--line);
-  padding: 16px 12px;
-  min-height: 0;
+.content-head {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-#transport {
-  grid-area: transport;
-  background: var(--panel-2);
-  border-top: 1px solid var(--line);
-  padding: 10px 16px;
-  display: grid;
-  grid-template-columns: minmax(0, 260px) minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: flex-end;
+  justify-content: space-between;
   gap: 16px;
+  padding: 18px 20px 12px;
 }
 
-/* ---- controls ---------------------------------------------------------- */
-
-button {
-  font: inherit;
-  color: var(--fg);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 4px 10px;
-  cursor: pointer;
-}
-
-button:hover {
-  background: var(--panel-2);
-  border-color: #3a3a3a;
-}
-
-input[type="search"],
-input[type="text"] {
-  font: inherit;
-  color: var(--fg);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 10px;
-  flex: 1;
+.content-titles {
   min-width: 0;
 }
 
-input[type="range"] {
-  accent-color: var(--accent);
-}
-
-/* ---- sidebar ----------------------------------------------------------- */
-
-.library-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.library-nav-item {
-  text-align: left;
-  border-color: transparent;
-}
-
-.library-nav-item[data-active="true"] {
-  background: var(--panel-2);
-  border-color: var(--line);
-  color: var(--accent);
-}
-
-.library-status {
+.heading {
   margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-/* ---- headings ---------------------------------------------------------- */
-
-.library-heading {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 21px;
+  font-weight: 650;
   letter-spacing: -0.01em;
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
-.library-subheading {
-  margin: 4px 0 12px;
+.heading > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subheading {
+  margin: 4px 0 0;
   color: var(--muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.content-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: none;
 }
 
-.library-message {
-  margin: 0 0 8px;
+.button {
+  height: 32px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.button:hover {
+  border-color: var(--line-strong);
+}
+
+.button-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.button-primary:hover {
+  background: var(--accent-hi);
+  border-color: transparent;
+}
+
+.button-quiet {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+}
+
+/* A segmented control: one border around the set rather than one per button, so
+   it reads as a single choice. */
+.segments {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.segment {
+  padding: 5px 11px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.segment[data-active='true'] {
+  background: var(--line);
+  color: var(--fg);
+}
+
+.message {
+  margin: 0 20px 8px;
   color: var(--bad);
   font-size: 12px;
 }
 
-/* ---- the virtual list -------------------------------------------------- */
+/* ---- the track table ----------------------------------------------------- */
+
+/* One grid, declared once and used by the header and by every row. Before this
+   the header did not exist and the columns were whatever each row's content made
+   them, which is how a list of tracks ends up with the album name starting at a
+   different x on every line. */
+.table-head,
+.track-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 2.2fr) minmax(0, 1.4fr) minmax(0, 1.5fr) 56px 32px;
+  align-items: center;
+  gap: 14px;
+}
+
+.table-head {
+  padding: 0 20px 7px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.table-head .col-number,
+.table-head .col-time {
+  text-align: right;
+}
 
 .library-list {
   flex: 1;
   min-height: 0;
+  padding-top: 2px;
 }
 
 .virtual-viewport {
@@ -203,8 +757,8 @@ input[type="range"] {
   position: relative;
 }
 
-/* As tall as every row put together, so the scrollbar is honest even though
-   only the visible rows exist. */
+/* As tall as every row put together, so the scrollbar is honest even though only
+   the visible rows exist. */
 .virtual-spacer {
   position: relative;
   width: 100%;
@@ -212,179 +766,519 @@ input[type="range"] {
 
 .virtual-rows {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  inset: 0 0 auto;
   /* Moved with a transform rather than `top`: a transform does not invalidate
      layout, which is what keeps a fast scroll on the compositor. */
   will-change: transform;
 }
 
 .track-row {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 3fr) minmax(0, 2fr) minmax(0, 2fr) 56px 32px;
-  align-items: center;
-  gap: 12px;
-  padding: 0 8px;
-  border-radius: 6px;
+  padding: 0 20px;
   cursor: default;
   user-select: none;
 }
 
 .track-row:hover {
-  background: var(--panel-2);
+  background: var(--row-hover);
 }
 
-.track-row > span {
+.track-row[data-current='true'] {
+  background: var(--row-current);
+}
+
+.track-row[data-current='true'] .track-title {
+  color: var(--accent-fg);
+  font-weight: 500;
+}
+
+.track-cell {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+/* One grid cell holding three things that are never shown together: the track
+   number, the play triangle it becomes under the pointer, and the bar mark that
+   replaces both on the row that is playing. Same cell, same width, so swapping
+   them moves nothing. */
+.track-lead {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.track-number,
+.track-time,
+.track-artist,
+.track-album,
+.track-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.track-number,
+.track-number {
+  text-align: right;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The number turns into a play triangle under the pointer. Same cell, same
+   width, so nothing shifts -- and the triangle says what a double-click does
+   without a tooltip. */
+.track-play {
+  display: none;
+  justify-content: flex-end;
+  color: var(--fg);
+}
+
+.track-row:hover .track-number {
+  display: none;
+}
+
+.track-row:hover .track-play {
+  display: flex;
+}
+
+.track-row[data-current='true'] .track-number,
+.track-row[data-current='true'] .track-play {
+  display: none;
+}
+
+.track-mark {
+  display: none;
+  justify-content: flex-end;
+  color: var(--accent);
+}
+
+.track-row[data-current='true'] .track-mark {
+  display: flex;
+}
+
+.track-artist {
+  color: var(--dim);
+}
+
+.track-album,
 .track-time {
   color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
 
 .track-time {
   text-align: right;
-}
-
-.track-artist,
-.track-album {
-  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .track-add {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
   opacity: 0;
-  padding: 0 6px;
+  cursor: pointer;
 }
 
 .track-row:hover .track-add {
   opacity: 1;
 }
 
-.track-row-pending {
-  color: var(--muted);
+.track-add:hover {
+  background: var(--line);
+  color: var(--fg);
 }
 
-/* ---- albums and artists ------------------------------------------------ */
+/* Focus has to win over the hover-only reveal, or the button is reachable by
+   keyboard and invisible while it is reached. */
+.track-add:focus-visible {
+  opacity: 1;
+}
+
+.track-row-pending {
+  padding: 0 20px;
+  color: var(--faint);
+  display: flex;
+  align-items: center;
+}
+
+/* ---- albums and artists -------------------------------------------------- */
 
 .library-grid {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 12px;
-  padding-bottom: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 20px 18px;
+  padding: 0 20px 20px;
   align-content: start;
 }
 
-.album-card,
-.artist-card {
+.album-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
   text-align: left;
-  padding: 8px;
-  background: var(--panel);
+  cursor: pointer;
+}
+
+.album-art {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+/* A monogram on a card is a different size from a monogram in a row, and the
+   cover sizes carry that in their font-size. This is the grid's. */
+.album-art .cover-empty {
+  border-radius: 9px;
+  font-size: 28px;
+}
+
+/* The play affordance appears over the artwork rather than next to it, so the
+   card is all cover until it is pointed at. */
+.album-shade {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--shade);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.album-card:hover .album-shade,
+.album-card:focus-visible .album-shade {
+  opacity: 1;
+}
+
+.album-shade > span {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .album-name {
-  font-weight: 600;
+  margin-top: 9px;
+  font-weight: 500;
+}
+
+.album-name,
+.album-meta {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.album-artist,
 .album-meta {
+  margin-top: 2px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.artist-card {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: var(--row);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.artist-card:hover {
+  background: var(--raised);
+}
+
+.artist-card > span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---- covers -------------------------------------------------------------- */
 
 .cover {
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
-  border-radius: 4px;
-  background: var(--panel-2);
+  border-radius: 5px;
+  background: var(--raised);
+  flex: none;
 }
 
-/* A square with the first letter in it, for the many files that carry no
-   artwork at all. Same size as a cover, so a grid of them does not reflow. */
+/* Two initials on a hue derived from the album name -- see the note in
+   format.ts. The hue comes in as a custom property, which is the only way a
+   stylesheet can colour something it has never heard of. */
 .cover-empty {
   display: grid;
   place-items: center;
-  color: var(--muted);
-  font-size: 20px;
+  background: linear-gradient(150deg,
+    hsl(var(--cover-h, 220) 28% 30%), hsl(var(--cover-h, 220) 30% 18%));
+  color: hsl(var(--cover-h, 220) 60% 80%);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
-.cover-small {
+:root[data-theme='light'] .cover-empty {
+  background: linear-gradient(150deg,
+    hsl(var(--cover-h, 220) 52% 90%), hsl(var(--cover-h, 220) 44% 80%));
+  color: hsl(var(--cover-h, 220) 45% 30%);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .cover-empty {
+    background: linear-gradient(150deg,
+      hsl(var(--cover-h, 220) 52% 90%), hsl(var(--cover-h, 220) 44% 80%));
+    color: hsl(var(--cover-h, 220) 45% 30%);
+  }
+}
+
+/* Nothing to derive a monogram from either. The dashed edge says "this is a
+   placeholder" in a way a coloured square does not. */
+.cover-blank {
+  background: var(--raised);
+  border: 1px dashed var(--line-strong);
+  color: var(--faint);
+}
+
+/* Scaled to the square it sits in rather than to the 13px the mark is elsewhere:
+   at 2.5px wide inside a 160px album card the bars read as scratches. In `em`,
+   because each cover size already sets a font-size and that is the one number
+   that says how big this square is. */
+.cover-blank .bars-cover {
+  height: 1.6em;
+  gap: 0.22em;
+}
+
+.cover-blank .bars-cover > i {
+  width: 0.24em;
+  border-radius: 999px;
+}
+
+.cover-lg {
+  width: 56px;
+  height: 56px;
+  border-radius: 7px;
+  font-size: 16px;
+}
+
+.cover-md {
   width: 44px;
   height: 44px;
-  flex: none;
+  border-radius: 6px;
+  font-size: 13px;
 }
 
-.cover-tiny {
-  width: 28px;
-  height: 28px;
-  flex: none;
+.cover-sm {
+  width: 32px;
+  height: 32px;
+  font-size: 11px;
 }
 
-/* ---- queue ------------------------------------------------------------- */
+.cover-xs {
+  width: 30px;
+  height: 30px;
+  font-size: 10px;
+}
 
-.queue-header {
+/* ---- the right column ---------------------------------------------------- */
+
+#side {
+  grid-area: side;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 10px 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  padding: 7px 12px 9px;
+  border: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab[data-active='true'] {
+  color: var(--fg);
+  font-weight: 550;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.tab-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.tabs-spacer {
+  flex: 1;
+}
+
+.tab-action {
+  align-self: center;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tab-action:hover {
+  color: var(--fg);
+  border-color: var(--line-strong);
+}
+
+.tab-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- queue --------------------------------------------------------------- */
+
+.now {
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
 }
 
-.queue-heading {
-  margin: 0;
-  font-size: 14px;
-  text-transform: uppercase;
+.now-labels {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.now-kicker {
+  font-size: 10px;
   letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.now-title {
+  font-weight: 550;
+}
+
+.now-title,
+.now-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-artist {
   color: var(--muted);
+  font-size: 12px;
+}
+
+.queue-head {
+  padding: 12px 14px 6px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.queue-left {
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .queue-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  padding: 0 8px 12px;
 }
 
 .queue-row {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 44px;
-  grid-template-rows: auto auto;
+  display: flex;
   align-items: center;
-  gap: 2px 8px;
-  border-color: transparent;
+  gap: 10px;
+  width: 100%;
+  height: var(--row);
+  padding: 0 6px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  font: inherit;
   text-align: left;
-  padding: 4px 6px;
+  cursor: pointer;
 }
 
-.queue-row .cover-tiny {
-  grid-row: span 2;
+.queue-row:hover {
+  background: var(--row-hover);
 }
 
-.queue-row[data-current="true"] {
-  background: var(--panel-2);
-  border-color: var(--line);
+.queue-row[data-current='true'] {
+  background: var(--accent-soft);
 }
 
-.queue-row[data-current="true"] .queue-title {
-  color: var(--accent);
+.queue-row[data-current='true'] .queue-title {
+  color: var(--accent-fg);
+}
+
+.queue-labels {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.queue-title {
+  font-size: 12.5px;
 }
 
 .queue-title,
@@ -396,105 +1290,310 @@ input[type="range"] {
 
 .queue-artist {
   color: var(--muted);
-  font-size: 12px;
-  grid-column: 2;
+  font-size: 11px;
 }
 
 .queue-time {
-  grid-row: span 2;
   color: var(--muted);
-  font-size: 12px;
-  text-align: right;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
+  flex: none;
 }
 
-.queue-empty {
-  margin: 8px 0;
+/* ---- empty states -------------------------------------------------------- */
+
+/* Every one of these says what happened, why, and what to do about it. An empty
+   pane that says "Nothing" is a pane that makes the reader guess which of those
+   three they are looking at. */
+.empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 13px;
+  text-align: center;
+  padding: 24px 44px;
+}
+
+.empty-mark {
+  color: var(--accent);
+  height: 44px;
+  gap: 6px;
+}
+
+.empty-mark > i {
+  width: 9px;
+  border-radius: 4.5px;
+}
+
+.empty-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.empty-body {
+  margin: 6px 0 0;
   color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+  max-width: 44ch;
+}
+
+.empty-actions {
+  display: flex;
+  gap: 9px;
+}
+
+/* What was searched for, quoted back in the accent, so the reader can see at a
+   glance whether the thing that found nothing is the thing they typed. */
+.empty .query {
+  color: var(--accent-fg);
+}
+
+.empty > svg {
+  color: var(--faint);
+}
+
+/* The second way of doing the same thing, said once and quietly under the first. */
+.empty-hint {
+  margin: 0;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.empty-hint code,
+.empty-body code {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+.empty-small {
+  padding: 18px 14px;
+  gap: 8px;
+  flex: none;
+}
+
+.empty-small .empty-body {
   font-size: 12px;
 }
 
-/* ---- transport --------------------------------------------------------- */
+/* ---- transport ----------------------------------------------------------- */
 
-.transport-now {
+#transport {
+  grid-area: transport;
+  position: relative;
+  height: 72px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 18px;
+  padding: 0 18px;
+}
+
+.transport-now {
+  width: 232px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 11px;
   min-width: 0;
 }
 
 .transport-labels {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  gap: 2px;
 }
 
 .transport-title {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 550;
 }
 
+.transport-title,
 .transport-artist,
 .transport-idle {
-  color: var(--muted);
-  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.transport-middle {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+.transport-artist {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.transport-idle {
+  color: var(--faint);
 }
 
 .transport-controls {
   display: flex;
-  gap: 8px;
-  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.transport-button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.transport-button:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.transport-button:disabled {
+  color: var(--line-strong);
+  cursor: default;
+  background: none;
+}
+
+.transport-stop {
+  color: var(--muted);
+}
+
+/* The one filled shape in the window. Play and pause are the control somebody
+   reaches for without reading, and this is what makes the eye find it. */
+.transport-play {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.transport-play:hover {
+  background: var(--accent-hi);
+  color: var(--on-accent);
+}
+
+.transport-play:disabled {
+  border: 1px solid var(--line-strong);
+  background: var(--raised);
+  color: var(--muted);
 }
 
 .transport-scrubber {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.transport-position {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.transport-elapsed,
+.transport-total {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
 }
 
 .transport-volume-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
+  flex: none;
+  width: 132px;
+}
+
+.transport-mute {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
-  font-size: 12px;
+}
+
+/* A range input, drawn rather than inherited. The native control is a different
+   shape and weight from everything else in this bar, and a 4px track with an
+   11px thumb is the shape the rest of the interface is drawn at. Chromium-only
+   pseudo-elements, which is exactly as portable as this application is. */
+.range {
+  flex: 1;
+  min-width: 0;
+  height: 11px;
+  margin: 0;
+  padding: 0;
+  background: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  /* The filled part is a gradient stop moved by --fill, set from TypeScript on
+     every state event. One property, no second element to keep in step. */
+  background: linear-gradient(
+    to right,
+    var(--range-fill, var(--accent)) 0 calc(var(--fill, 0) * 100%),
+    var(--line) calc(var(--fill, 0) * 100%) 100%
+  );
+}
+
+.range::-webkit-slider-thumb {
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -3.5px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--fg);
+}
+
+.range:disabled {
+  cursor: default;
+}
+
+.range:disabled::-webkit-slider-runnable-track {
+  background: var(--line);
+}
+
+.range:disabled::-webkit-slider-thumb {
+  display: none;
 }
 
 .transport-volume {
-  width: 100px;
+  --range-fill: var(--muted);
+  flex: 1;
 }
 
-.transport-status,
-.transport-error {
-  margin: 0;
-  grid-column: 2;
-  font-size: 12px;
-  color: var(--muted);
-  text-align: center;
+/* Paused: the accent drains out of the position bar, so the state is visible
+   from across the room and not only in the shape of one button. */
+#transport[data-state='paused'] .transport-position {
+  --range-fill: var(--faint);
 }
 
+#transport[data-state='paused'] .transport-position::-webkit-slider-thumb {
+  background: var(--dim);
+}
+
+/* An error is not a state to tuck into a tooltip: it is why there is silence.
+   Above the bar rather than inside it, because the bar is full. */
 .transport-error {
+  position: absolute;
+  inset: auto 18px 100% 18px;
+  margin: 0 0 8px;
+  padding: 7px 11px;
+  border: 1px solid var(--bad);
+  border-radius: var(--radius);
+  background: var(--surface);
   color: var(--bad);
+  font-size: 12px;
 }
 
 .unavailable {
@@ -503,20 +1602,285 @@ input[type="range"] {
   font-size: 12px;
 }
 
-/* ---- diagnostics ------------------------------------------------------- */
+/* ---- the agent panel -- ADR 0016 ----------------------------------------- */
 
+/* It was a box floating over the queue. A box that floats over the thing it
+   changes is a box that has to be moved out of the way to see what it did, so it
+   is now the second tab of the column the queue is in: same width, same rules,
+   no overlap. */
+
+.chat {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 14px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.turn-you {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 8px 11px;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+  overflow-wrap: anywhere;
+}
+
+.turn-shell {
+  max-width: 96%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.turn-reply {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px 12px 12px 4px;
+  background: var(--raised);
+  overflow-wrap: anywhere;
+}
+
+.turn-reply[data-thinking='true'] {
+  color: var(--muted);
+}
+
+/* Every step, with the tool's own name and the arguments the broker accepted. A
+   plan the person cannot read is a plan they cannot agree to, so this list is the
+   design and not a debugging convenience. */
+.steps {
+  margin: 0;
+  padding: 0 0 0 2px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 2px 7px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.step > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.step-done > svg {
+  color: var(--ok);
+}
+
+.step-waiting > svg {
+  color: var(--warn);
+}
+
+/* A method name is one token. Breaking it mid-word to save four pixels turns
+   `library.search` into `library.se arch`, which is a name that does not exist. */
+.step-tool {
+  font-family: var(--mono);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* The arguments are the part that may be long, so they are the part that wraps. */
+.step-args {
+  font-family: var(--mono);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A plan that needs an answer. Bordered in the warning colour, because the
+   difference between "this has happened" and "this will happen if you say so" is
+   the only thing in this panel that matters. */
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+  border-radius: 12px;
+  background: var(--raised);
+}
+
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--warn);
+}
+
+.plan-steps {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--dim);
+}
+
+/* Answered. The steps stay -- they are the record of what was agreed to -- and the
+   border loses the colour that meant "this is waiting for you". */
+.plan-answered {
+  border-color: var(--line);
+}
+
+.plan-answered .plan-head {
+  color: var(--muted);
+}
+
+.plan-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.plan-actions .button-primary {
+  flex: 1;
+}
+
+/* A refusal is not an error to tuck away: it is the most interesting thing this
+   panel can report, so it is the loudest thing in it. */
+.refusal {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--bad);
+  border-radius: 12px;
+  color: var(--bad);
+  overflow-wrap: anywhere;
+}
+
+.composer {
+  padding: 12px 14px 14px;
+}
+
+.composer-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--raised);
+}
+
+.composer-field:focus-within {
+  border-color: var(--accent);
+}
+
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  outline: none;
+}
+
+.composer-input::placeholder {
+  color: var(--faint);
+}
+
+.composer-send {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: var(--line);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.composer-send:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.composer-send:disabled {
+  background: var(--raised);
+  color: var(--line-strong);
+  cursor: default;
+}
+
+.composer-note {
+  margin: 8px 2px 0;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.tools {
+  margin: 0 14px 12px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.tools > summary {
+  cursor: pointer;
+}
+
+.tool-table {
+  margin-top: 6px;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.tool-table td {
+  padding: 3px 6px 3px 0;
+  vertical-align: top;
+}
+
+.tool-name {
+  color: var(--dim);
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+.tool-effect {
+  white-space: nowrap;
+}
+
+.tool-effect-read {
+  color: var(--ok);
+}
+
+.tool-effect-confirm {
+  color: var(--warn);
+}
+
+/* ---- diagnostics --------------------------------------------------------- */
+
+/* Week 4's whole page, now a panel that starts closed and is removed entirely
+   when the capability is off. Still the fastest way to see whether the bridge,
+   the negotiation and the event coalescing are working, from inside the
+   application. */
 #diagnostics-panel {
   position: fixed;
   right: 12px;
-  bottom: 96px;
+  bottom: 84px;
   max-width: min(560px, calc(100vw - 24px));
   max-height: 50vh;
   overflow: auto;
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 8px 12px;
   font-size: 12px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
 }
 
 #diagnostics-panel summary {
@@ -541,172 +1905,196 @@ input[type="range"] {
   overflow-wrap: anywhere;
 }
 
-#diagnostics dd[data-state="ok"] {
+#diagnostics dd[data-state='ok'] {
   color: var(--ok);
 }
 
-#diagnostics dd[data-state="bad"] {
+#diagnostics dd[data-state='bad'] {
   color: var(--bad);
 }
 
-#diagnostics dd[data-state="degraded"] {
+#diagnostics dd[data-state='degraded'] {
   color: var(--warn);
 }
 
-#diagnostics dd[data-state="pending"] {
+#diagnostics dd[data-state='pending'] {
   color: var(--muted);
 }
 
-/* ------------------------------------------------------------------------- */
-/* The agent panel -- ADR 0016                                               */
-/*                                                                           */
-/* Above the transport and below the diagnostics, on the same right-hand      */
-/* column: it is a thing you open, use and stop using, not part of the        */
-/* furniture. Wider than the diagnostics because a plan's arguments are the   */
-/* point and wrapping them defeats it.                                       */
+/* ---- scrollbars ---------------------------------------------------------- */
 
-#agent-panel {
-  position: fixed;
-  right: 12px;
-  bottom: 146px;
-  width: min(460px, calc(100vw - 24px));
-  max-height: 46vh;
-  overflow: auto;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 12px;
+/* Chromium's default scrollbar on a dark surface is a light grey slab that is the
+   brightest thing in the window. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
 }
 
-.agent-ask {
-  display: flex;
-  gap: 8px;
-}
-
-.agent-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  background: var(--panel-2);
-  color: var(--fg);
-  border: 1px solid var(--line);
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
   border-radius: 6px;
-  padding: 6px 8px;
-  font: inherit;
+  background: var(--line-strong);
+  background-clip: content-box;
 }
 
-.agent-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+  background-clip: content-box;
 }
 
-.agent-send,
-.agent-accept,
-.agent-decline {
-  background: var(--panel-2);
-  color: var(--fg);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font: inherit;
-  cursor: pointer;
+::-webkit-scrollbar-track {
+  background: none;
 }
 
-/* The one button that changes something the person can hear is the one that looks
-   like a decision. */
-.agent-accept {
-  border-color: var(--accent);
-  color: var(--accent);
+mark {
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
 }
 
-.agent-reply {
-  margin: 8px 0 0;
-  color: var(--muted);
+/* ---- narrower windows ---------------------------------------------------- */
+/*
+ * Every media query in this file is here, at the end, and that placement is the
+ * fix for a real bug rather than a filing convention.
+ *
+ * A media query does not raise specificity. `@media (...) { #side { display:
+ * none } }` and `#side { display: flex }` are both one id selector, so the one
+ * written later wins -- whatever the window is doing. The first version of this
+ * stylesheet had the layout's media query at the top, next to #app, and the
+ * `#side { display: flex }` that belongs with the right column six hundred lines
+ * below it. Below 1100px the query redefined grid-template-areas without a
+ * `side` area and the column it meant to remove was still displayed, so it was
+ * auto-placed into an implicit track -- and the result was not a column missing,
+ * it was the whole window in pieces: the content pane collapsed to zero height,
+ * the transport in the second row, the queue hanging off the bottom right.
+ *
+ * It cost one resized window to see and would have cost a long time to find by
+ * reading, because the rule that loses looks correct where it is written. So the
+ * rule is now: everything that depends on the window's width lives down here,
+ * after every rule it has to override, in increasing order of narrowness.
+ */
+
+/* Enough room for the whole layout, less room to waste on the right. */
+@media (width < 1180px) {
+  #app {
+    --side: 264px;
+  }
 }
 
-.agent-steps {
-  margin: 8px 0 0;
-  padding-left: 20px;
-  display: grid;
-  gap: 4px;
+/* The point where three columns stop fitting. The right column is the one that
+   goes, because it is the only pane whose content is reachable another way -- but
+   it is not deleted: it becomes a drawer over the content, opened from a button
+   in the header, so the queue and the agent are one click away rather than gone.
+   The track list is never the pane that gives up room; it is what the window is
+   for. */
+@media (width < 1020px) {
+  #app {
+    grid-template-columns: 224px minmax(0, 1fr);
+    grid-template-areas:
+      'sidebar search'
+      'sidebar content'
+      'transport transport';
+  }
+
+  #side {
+    /* Out of the grid entirely: an absolutely positioned child of #app, whose
+       `position: relative` is what it is measured against. `grid-area: auto`
+       because the named area no longer exists above. */
+    grid-area: auto;
+    position: absolute;
+    inset: 0 0 72px auto;
+    width: min(308px, 82vw);
+    z-index: 20;
+    border-left: 1px solid var(--line);
+    box-shadow: -18px 0 36px rgb(0 0 0 / 34%);
+    transform: translateX(100%);
+    visibility: hidden;
+    transition: transform 160ms ease-out, visibility 160ms;
+  }
+
+  #app[data-side='open'] #side {
+    transform: none;
+    visibility: visible;
+  }
+
+  .scrim {
+    display: block;
+  }
+
+  #app[data-side='open'] .scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .side-toggle {
+    display: flex;
+  }
+
+  /* The album is the column that goes first: it is the one a listener is least
+     often scanning for, and in most libraries it repeats down the page. */
+  .col-album,
+  .track-album {
+    display: none;
+  }
+
+  .table-head,
+  .track-row {
+    grid-template-columns: 40px minmax(0, 2.4fr) minmax(0, 1.6fr) 56px 32px;
+  }
 }
 
-.agent-step {
-  overflow-wrap: anywhere;
+/* Below this there is not room for the times, and the times are the first thing
+   in the transport that can go: the bar already says roughly where you are. The
+   four controls never move, at any width. */
+@media (width < 900px) {
+  .transport-elapsed,
+  .transport-total {
+    display: none;
+  }
+
+  .transport-now {
+    width: 168px;
+  }
 }
 
-/* A step that has not happened is dimmer than one that has, so the difference is
-   visible without reading the note next to it. */
-.agent-step-waiting {
-  color: var(--muted);
+/* The last step before the floor. The native window refuses to be resized below
+   640x480 device-independent pixels (platform::WindowDesc), so this rule and the
+   one above it are the whole range below 1020 -- there is nothing narrower to
+   design for. The sidebar gives up its padding and its counts before the list
+   gives up a column, because the list is what the window is for. */
+@media (width < 820px) {
+  #app {
+    grid-template-columns: 188px minmax(0, 1fr);
+  }
+
+  #sidebar {
+    padding: 14px 8px;
+  }
+
+  .nav-count {
+    display: none;
+  }
+
+  .content-head,
+  .table-head,
+  .track-row,
+  .track-row-pending,
+  .library-grid {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  #search {
+    padding: 12px 14px;
+  }
 }
 
-.agent-step-tool {
-  color: var(--fg);
-}
-
-.agent-step-args {
-  color: var(--muted);
-  margin-left: 6px;
-}
-
-.agent-step-note {
-  margin-left: 6px;
-  color: var(--warn);
-}
-
-.agent-actions {
-  margin-top: 8px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-/* A refusal is not an error to tuck away: it is the most interesting thing this
-   panel can report, so it is the loudest thing in it. */
-.agent-refusal {
-  margin: 0;
-  color: var(--bad);
-}
-
-.agent-tools {
-  margin-top: 10px;
-  color: var(--muted);
-}
-
-.agent-tools summary {
-  cursor: pointer;
-}
-
-.agent-tool-table {
-  margin-top: 6px;
-  border-collapse: collapse;
-  width: 100%;
-}
-
-.agent-tool-table td {
-  padding: 2px 6px 2px 0;
-  vertical-align: top;
-}
-
-.agent-tool-name {
-  color: var(--fg);
-  white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-}
-
-.agent-effect {
-  white-space: nowrap;
-}
-
-.agent-effect-read {
-  color: var(--ok);
-}
-
-.agent-effect-confirm {
-  color: var(--warn);
-}
-
-.agent-note {
-  margin: 8px 0 0;
+/* A window short enough that the queue's now-playing block and the list are
+   fighting for the same forty pixels. The block goes: the same track is named in
+   the transport, two inches below. */
+@media (height < 560px) {
+  .now {
+    display: none;
+  }
 }
