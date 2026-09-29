@@ -60,6 +60,17 @@ a command line; and phase six, which had been sitting unreleased.
   folder chooser; against an older shell there is no button and the command-line flag is the
   whole story, which is what it was.
 
+### Shipping it
+
+- **The first delta between two real releases.** Every previous release published a full
+  package and no patch, because there was no earlier release carrying one to patch from. The
+  step that builds that patch and names it in the manifest therefore ran for the first time
+  here — and was wrong in two ways at once: it passed an absolute Windows path through a
+  colon-separated field list, so the drive letter was read as a filename, and it deleted the
+  old archive one step before the manifest hashed it. Both are fixed, the field separator is
+  now one a path cannot contain, and `gen_manifest.py --self-test` runs the whole two-release,
+  one-delta shape on every push instead of only on a tag.
+
 ### The agent — phase 6 of the roadmap
 
 The job description asked for it by name: *"AI agent integrations within the Spotify Desktop

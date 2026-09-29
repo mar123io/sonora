@@ -43,9 +43,10 @@ env:
 
 jobs:
   format:
-    # Two checks that compile nothing and both fail on something a build cannot see: a file
-    # formatted differently from the rest, and a link to a file this repository does not have.
-    name: format and links
+    # Three checks that compile nothing and each fail on something a build cannot see: a
+    # file formatted differently from the rest, a link to a file this repository does not
+    # have, and a release manifest that only a tag would otherwise have tried to write.
+    name: checks that compile nothing
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +69,12 @@ jobs:
       # only ever has what git has, which is why this belongs here and not on a laptop.
       - name: Check the internal links
         run: python tools/check_links.py
+      # The release path, run on a push instead of on a tag. Two defects lived in it for
+      # two months because it only executes when a previous release published an update
+      # package, and until v1.1.0 none had. Ten seconds here against fifteen minutes of a
+      # Windows runner, on a tag, per attempt.
+      - name: Check the manifest generator
+        run: python tools/gen_manifest.py --self-test
 
   ui:
     name: web UI
@@ -541,7 +548,7 @@ jobs:
           $arguments = @(
             '--out', 'build/updates/manifest.json',
             '--channel', 'stable',
-            '--release', "${version}:win-x64:${spk}:${spk}.zst:$urlBase"
+            '--release', "${version}|win-x64|${spk}|${spk}.zst|$urlBase"
           )
 
           $tags = @()
@@ -576,11 +583,19 @@ jobs:
             # own installation against the archive hash it was published with before it
             # patches from it. Without that entry the delta path still works, but the
             # first thing that notices a modified installation is a wasted download.
-            $oldZst = $package.FullName
+            #
+            # Relative, not $package.FullName. The fields are bar-separated now -- see
+            # tools/gen_manifest.py -- but an absolute path is still the wrong thing to
+            # write into a document that is about to be read back on another machine, and
+            # the colon in "D:" is what taught this pipeline the difference.
+            $oldZst = "$dir/" + $package.Name
             $oldUrlBase = "https://github.com/${{ github.repository }}/releases/download/$tag"
-            $arguments += @('--release', "${old}:win-x64:${oldSpk}:${oldZst}:$oldUrlBase")
-            $arguments += @('--delta', "${version}:${old}:$patch")
-            Remove-Item $oldSpk -Force
+            $arguments += @('--release', "${old}|win-x64|${oldSpk}|${oldZst}|$oldUrlBase")
+            $arguments += @('--delta', "${version}|${old}|$patch")
+            # $oldSpk is deliberately NOT deleted here. The manifest names it as the old
+            # release's archive and hashes it, so removing it in this loop left the next
+            # step reading a file this step had just taken away. It goes after the
+            # manifest is written, which is the earliest moment nothing needs it.
           }
 
           $arguments | Set-Content build/updates/manifest-args.txt -Encoding ascii
@@ -592,6 +607,10 @@ jobs:
           $arguments = Get-Content build/updates/manifest-args.txt
           python tools/gen_manifest.py @arguments
           Get-Content build/updates/manifest.json
+          # Now that they have been hashed. Each expanded old archive is a couple of
+          # hundred megabytes and none of them is uploaded; the step above is the one that
+          # needed them to exist.
+          Remove-Item build/updates/prev/*/*.spk -Force -ErrorAction SilentlyContinue
 
       # The uncompressed .spk is 213 MiB and nobody downloads it: it exists during this
       # job so that patches can be computed against it, and its hash in the manifest is

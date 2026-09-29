@@ -2682,3 +2682,37 @@ Ripristinato da `git show HEAD:README.md` e rifatta la modifica sul file vero; p
 verificato **tutti** gli altri file consegnati contro HEAD, uno per uno, e nessun altro era
 vecchio. Il controllo che serviva non era "il diff sembra ragionevole", era "il file di
 partenza è quello giusto".
+
+### Poscritto: il primo delta vero
+
+Il tag `v1.1.0` è fallito al passo *Write the manifest*, e vale la pena scriverlo perché è
+esattamente il tipo di guasto che questo progetto si è attrezzato per trovare — e non l'ha
+trovato.
+
+Fino alla v1.1.0 nessun rilascio aveva un rilascio precedente con un pacchetto da cui
+ricavare una patch. Quindi il ciclo che scarica il pacchetto vecchio, lo espande, calcola il
+delta e lo nomina nel manifest **non era mai stato eseguito**: sta lì da undici settimane e
+girava a vuoto ogni volta.
+
+Conteneva due difetti, e il secondo si sarebbe visto solo dopo aver corretto il primo.
+
+- `gen_manifest.py` separava i campi di `--release` con i due punti, e tre dei cinque campi
+  sono un percorso o una URL. Il percorso del pacchetto vecchio arrivava assoluto
+  (`D:\a\sonora\...`), lo `split(":")` prendeva la lettera dell'unità come nome di file, e
+  il processo moriva con `FileNotFoundError: 'D'`. Il separatore adesso è una barra verticale,
+  che un percorso Windows non può contenere — il filesystem la rifiuta — e che in una URL non
+  compare non codificata.
+- Il ciclo cancellava l'archivio `.spk` espanso alla fine di ogni iterazione, un passo prima
+  che il manifest lo aprisse per calcolarne l'hash. La cancellazione ora avviene dopo.
+
+Entrambi riprodotti prima di essere corretti, con le stringhe esatte che il runner passa, e
+il secondo l'ho trovato solo perché ho rimesso il primo a posto e ho rieseguito invece di
+dichiarare finito.
+
+La correzione che conta però non è nessuna delle due: è che quel percorso adesso viene
+eseguito su ogni push. `gen_manifest.py --self-test` costruisce in una cartella temporanea
+due rilasci e un delta, con un percorso assoluto in stile Windows fra gli argomenti, e
+controlla che il manifest esca con la patch attaccata e che un file inesistente venga
+rifiutato per nome. Dieci secondi su Linux contro quindici minuti di runner Windows su un
+tag, per tentativo. È la stessa forma del controllo dei link di due giorni fa: una cosa che
+non compila niente e che fallisce su qualcosa che la build non può vedere.
